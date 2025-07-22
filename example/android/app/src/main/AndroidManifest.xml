@@ -3,6 +3,7 @@
     <application
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="true"
         android:label="twilio_video_advanced_example">
         <activity
             android:name=".MainActivity"

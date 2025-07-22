@@ -1,5 +1,5 @@
 name: twilio_video_advanced
-description: "A new Flutter plugin project."
+description: "Advanced Twilio Video plugin with observer mode and fine-grained control"
 version: 0.0.1
 homepage:
 
@@ -11,6 +11,7 @@ dependencies:
   flutter:
     sdk: flutter
   plugin_platform_interface: ^2.0.2
+  stream_transform: ^2.1.1
 
 dev_dependencies:
   flutter_test:
