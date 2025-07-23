@@ -18,9 +18,13 @@ for updates or consider contributing to the iOS implementation.
 - 🎥 **Observer Mode**: Join rooms without broadcasting to watch others
 - 📺 **Go Live**: Start/stop video and audio broadcasting independently
 - 🎛️ **Advanced Controls**: Toggle camera, microphone, switch cameras
+- 🔦 **Flash/Torch Control**: Toggle camera flash for better lighting during video calls
 - 🎨 **Enhanced UI**: Picture-in-Picture, dominant speaker detection, grid layouts
 - 🔄 **Auto-reconnection**: Robust connection handling with reconnection support
 - 📱 **Platform Views**: Native video rendering for optimal performance
+- 🎚️ **Video Quality Management**: Adaptive quality based on device capabilities
+- 🔒 **Permission Handling**: Automatic permission management for camera and microphone
+- ⚡ **Wake Lock**: Keeps screen on during video calls for better user experience
 
 ## Screenshots
 
@@ -184,6 +188,33 @@ _twilio.toggleLocalVideo
 await
 _twilio.switchCamera
 ();
+
+// Flash/Torch Controls
+// Check if flash is available on current camera
+bool isAvailable = await
+_twilio.isTorchAvailable
+();
+
+// Check if flash is currently on
+bool isOn = await
+_twilio.isTorchOn
+();
+
+// Toggle flash on/off
+bool newState = await
+_twilio.toggleTorch
+();
+
+// Set flash state explicitly
+await
+_twilio.setTorchEnabled
+(true); // Turn on
+await _twilio
+.
+setTorchEnabled
+(
+false
+); // Turn off
 ```
 
 ### Using the Enhanced UI Components
@@ -310,6 +341,26 @@ Start as an observer and seamlessly transition to broadcasting:
 | `toggleLocalVideo()`    | Toggle camera on/off             |
 | `switchCamera()`        | Switch between front/back camera |
 
+### Flash/Torch Control Methods
+
+| Method                  | Description                                   |
+|-------------------------|-----------------------------------------------|
+| `isTorchAvailable()`    | Check if flash is available on current camera |
+| `isTorchOn()`           | Check if flash is currently enabled           |
+| `toggleTorch()`         | Toggle flash on/off and return new state      |
+| `setTorchEnabled(bool)` | Set flash state explicitly                    |
+
+### Permission Management Methods
+
+| Method                               | Description                                   |
+|--------------------------------------|-----------------------------------------------|
+| `requestPermissions()`               | Request camera and microphone permissions     |
+| `checkPermissions()`                 | Check current permission status               |
+| `hasAllPermissions()`                | Check if all required permissions are granted |
+| `connectToRoomWithPermissions()`     | Connect with automatic permission handling    |
+| `publishLocalVideoWithPermissions()` | Publish video with permission check           |
+| `publishLocalAudioWithPermissions()` | Publish audio with permission check           |
+
 ### Events
 
 | Event                          | Description                          |
@@ -321,6 +372,8 @@ Start as an observer and seamlessly transition to broadcasting:
 | `DominantSpeakerChangedEvent`  | Active speaker changed               |
 | `TrackSubscribedEvent`         | Video/audio track became available   |
 | `TrackUnsubscribedEvent`       | Video/audio track became unavailable |
+| `TorchStatusChangedEvent`      | Flash/torch status changed           |
+| `TorchErrorEvent`              | Flash/torch operation error          |
 
 ## Troubleshooting
 
