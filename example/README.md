@@ -4,6 +4,14 @@ This example demonstrates how to use the `twilio_video_advanced` Flutter plugin 
 comprehensive video calling application with observer mode, broadcasting controls, and enhanced UI
 features.
 
+## ⚠️ Platform Support Status
+
+**🤖 Android**: ✅ Fully supported and tested  
+**🍎 iOS**: ⚠️ **Not yet implemented** - iOS support is currently in development and will be
+available in a future release.
+
+This example currently works on **Android only**. The iOS implementation is still being developed.
+
 ## Features Demonstrated
 
 - 🎯 **Observer Mode**: Join rooms without initially broadcasting

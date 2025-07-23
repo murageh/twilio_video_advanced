@@ -3,6 +3,16 @@
 An advanced Flutter plugin for Twilio Video that provides comprehensive video calling functionality
 with support for observer mode, broadcasting controls, and enhanced UI components.
 
+## ⚠️ Platform Support Status
+
+**🤖 Android**: ✅ Fully supported and tested  
+**🍎 iOS**: ⚠️ **Not yet implemented** - iOS support is currently in development and will be
+available in a future release.
+
+This plugin currently supports **Android only**. While the Dart/Flutter code is platform-agnostic,
+the native iOS implementation is still being developed. If you need iOS support, please check back
+for updates or consider contributing to the iOS implementation.
+
 ## Features
 
 - 🎥 **Observer Mode**: Join rooms without broadcasting to watch others
