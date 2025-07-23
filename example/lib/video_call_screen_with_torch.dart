@@ -5,32 +5,33 @@ import 'package:flutter/material.dart';
 import 'package:twilio_video_advanced/events/TwilioEvent.dart';
 import 'package:twilio_video_advanced/models/remote_participant.dart';
 import 'package:twilio_video_advanced/twilio_video_advanced.dart';
-
-import 'enhanced_participants_grid.dart';
+import 'package:twilio_video_advanced/widgets/enhanced_participants_grid.dart';
 
 enum ConnectionState {
   connecting,
   connected,
   disconnected,
   reconnecting,
-  failed
+  failed,
 }
 
-class TwilioVideoCallScreen extends StatefulWidget {
+class TwilioVideoCallScreenWithTorch extends StatefulWidget {
   final String roomName;
   final String accessToken;
 
-  const TwilioVideoCallScreen({
+  const TwilioVideoCallScreenWithTorch({
     super.key,
     required this.roomName,
     required this.accessToken,
   });
 
   @override
-  State<TwilioVideoCallScreen> createState() => _TwilioVideoCallScreenState();
+  State<TwilioVideoCallScreenWithTorch> createState() =>
+      _TwilioVideoCallScreenWithTorchState();
 }
 
-class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
+class _TwilioVideoCallScreenWithTorchState
+    extends State<TwilioVideoCallScreenWithTorch> {
   final _twilio = TwilioVideoAdvanced.instance;
   final List<RemoteParticipant> _participants = [];
   RemoteParticipant? _dominantSpeaker;
@@ -49,6 +50,10 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
   bool _isVideoEnabled = true;
   bool _isFrontCamera = true;
 
+  // Torch/Flash states
+  bool _isTorchAvailable = false;
+  bool _isTorchOn = false;
+
   // Dominance management
   DominantParticipant _dominantParticipant = DominantParticipant.none;
   bool _manualDominanceSet = false;
@@ -58,11 +63,12 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
     super.initState();
     _setupEventListeners();
     _connectToRoom();
+    _checkTorchAvailability();
   }
 
   void debug(String message) {
     if (kDebugMode) {
-      print('TwilioVideoCallScreen::DEBUG: $message');
+      print('TwilioVideoCallScreenWithTorch::DEBUG: $message');
     }
   }
 
@@ -111,7 +117,6 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
             _dominantParticipant = DominantParticipant.none;
             _manualDominanceSet = false;
           });
-          // _handleDisconnection(event.error);
         }
       } else if (event is ParticipantConnectedEvent) {
         if (mounted) {
@@ -143,13 +148,23 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
         if (mounted) {
           setState(() {});
         }
-      } else
-      if (event is TrackUnsubscribedEvent && event.trackType == 'video') {
+      } else if (event is TrackUnsubscribedEvent &&
+          event.trackType == 'video') {
         debug(
-            'Video track unsubscribed: participantSid=${event.participantSid}');
+          'Video track unsubscribed: participantSid=${event.participantSid}',
+        );
         if (mounted) {
           setState(() {});
         }
+      } else if (event is TorchStatusChangedEvent) {
+        if (mounted) {
+          setState(() {
+            _isTorchAvailable = event.isAvailable;
+            _isTorchOn = event.isOn;
+          });
+        }
+      } else if (event is TorchErrorEvent) {
+        _showErrorSnackBar('Flash error: ${event.error}');
       }
     });
   }
@@ -179,12 +194,157 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
     }
   }
 
+  Future<void> _checkTorchAvailability() async {
+    try {
+      final available = await _twilio.isTorchAvailable();
+      final isOn = await _twilio.isTorchOn();
+      if (mounted) {
+        setState(() {
+          _isTorchAvailable = available;
+          _isTorchOn = isOn;
+        });
+      }
+    } catch (e) {
+      debug('Torch availability check failed: $e');
+    }
+  }
+
+  // Auto-dominance logic
+  void _updateAutoDominance() {
+    if (_manualDominanceSet) return;
+
+    if (_participants.isEmpty) {
+      _dominantParticipant =
+          _isVideoPublished
+              ? DominantParticipant.local
+              : DominantParticipant.none;
+    } else if (_participants.length == 1 && _isVideoPublished) {
+      _dominantParticipant = DominantParticipant.remote;
+    } else {
+      _dominantParticipant = DominantParticipant.none;
+    }
+
+    debug('Auto-dominance updated to: $_dominantParticipant');
+  }
+
+  void _onDominantParticipantChanged(DominantParticipant newDominant) {
+    setState(() {
+      _dominantParticipant = newDominant;
+      _manualDominanceSet = true;
+    });
+    debug('Manual dominance changed to: $newDominant');
+  }
+
+  void _resetManualDominance() {
+    _manualDominanceSet = false;
+    _updateAutoDominance();
+  }
+
+  // Media control methods
+  Future<void> _toggleAudioPublish() async {
+    try {
+      if (_isAudioPublished) {
+        await _twilio.unpublishLocalAudio();
+        _showInfoSnackBar('Audio stopped');
+      } else {
+        await _twilio.publishLocalAudio();
+        _showSuccessSnackBar('Audio started');
+      }
+      setState(() => _isAudioPublished = !_isAudioPublished);
+    } catch (e) {
+      _showErrorSnackBar(
+        'Failed to ${_isAudioPublished ? 'stop' : 'start'} audio: ${e.toString()}',
+      );
+    }
+  }
+
+  Future<void> _toggleVideoPublish() async {
+    try {
+      if (_isVideoPublished) {
+        await _twilio.unpublishLocalVideo();
+        _showInfoSnackBar('Video stopped');
+      } else {
+        await _twilio.publishLocalVideo();
+        _showSuccessSnackBar('Going live!');
+        // Check torch availability after video starts
+        await _checkTorchAvailability();
+      }
+      setState(() {
+        _isVideoPublished = !_isVideoPublished;
+        _resetManualDominance();
+      });
+    } catch (e) {
+      _showErrorSnackBar(
+        'Failed to ${_isVideoPublished ? 'stop' : 'start'} video: ${e.toString()}',
+      );
+    }
+  }
+
+  Future<void> _toggleAudio() async {
+    try {
+      final enabled = await _twilio.toggleLocalAudio();
+      setState(() => _isAudioEnabled = enabled);
+      _showInfoSnackBar(enabled ? 'Audio unmuted' : 'Audio muted');
+    } catch (e) {
+      _showErrorSnackBar('Failed to toggle audio: ${e.toString()}');
+    }
+  }
+
+  Future<void> _toggleVideo() async {
+    try {
+      final enabled = await _twilio.toggleLocalVideo();
+      setState(() => _isVideoEnabled = enabled);
+      _showInfoSnackBar(enabled ? 'Camera on' : 'Camera off');
+    } catch (e) {
+      _showErrorSnackBar('Failed to toggle camera: ${e.toString()}');
+    }
+  }
+
+  Future<void> _switchCamera() async {
+    try {
+      await _twilio.switchCamera();
+      setState(() => _isFrontCamera = !_isFrontCamera);
+      _showInfoSnackBar(
+        'Camera switched to ${_isFrontCamera ? 'front' : 'back'}',
+      );
+      // Check torch availability after camera switch
+      await _checkTorchAvailability();
+    } catch (e) {
+      _showErrorSnackBar('Failed to switch camera: ${e.toString()}');
+    }
+  }
+
+  // Torch control methods
+  Future<void> _toggleTorch() async {
+    if (!_isTorchAvailable) {
+      _showErrorSnackBar('Flash not available on current camera');
+      return;
+    }
+
+    try {
+      final newState = await _twilio.toggleTorch();
+      setState(() => _isTorchOn = newState);
+      _showInfoSnackBar('Flash ${newState ? 'ON' : 'OFF'}');
+    } catch (e) {
+      _showErrorSnackBar('Failed to toggle flash: ${e.toString()}');
+    }
+  }
+
+  Future<void> _leaveCall() async {
+    try {
+      await _twilio.disconnect();
+    } catch (e) {
+      _showErrorSnackBar('Failed to leave call: ${e.toString()}');
+    }
+  }
+
+  // UI helper methods
   void _showConnectionErrorDialog(String error) {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) =>
-          AlertDialog(
+      builder:
+          (context) => AlertDialog(
             title: const Row(
               children: [
                 Icon(Icons.error_outline, color: Colors.red),
@@ -207,7 +367,9 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
                   child: Text(
                     error,
                     style: const TextStyle(
-                        fontSize: 12, fontFamily: 'monospace'),
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                    ),
                   ),
                 ),
               ],
@@ -216,14 +378,14 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
               TextButton(
                 onPressed: () {
                   Navigator.of(context).pop();
-                  Navigator.of(context).pop(); // Exit to previous screen
+                  Navigator.of(context).pop();
                 },
                 child: const Text('Go Back'),
               ),
               ElevatedButton(
                 onPressed: () {
                   Navigator.of(context).pop();
-                  _connectToRoom(); // Retry connection
+                  _connectToRoom();
                 },
                 child: const Text('Retry'),
               ),
@@ -288,116 +450,6 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
     );
   }
 
-  // Auto-dominance logic
-  void _updateAutoDominance() {
-    if (_manualDominanceSet) return; // Don't override manual selection
-
-    if (_participants.isEmpty) {
-      // Only local participant - make local dominant if video is published
-      _dominantParticipant =
-      _isVideoPublished ? DominantParticipant.local : DominantParticipant.none;
-    } else if (_participants.length == 1 && _isVideoPublished) {
-      // One remote + local - make remote dominant by default
-      _dominantParticipant = DominantParticipant.remote;
-    } else {
-      // Multiple participants - use grid layout
-      _dominantParticipant = DominantParticipant.none;
-    }
-
-    debug('Auto-dominance updated to: $_dominantParticipant');
-  }
-
-  // Manual dominance switching
-  void _onDominantParticipantChanged(DominantParticipant newDominant) {
-    setState(() {
-      _dominantParticipant = newDominant;
-      _manualDominanceSet = true; // Mark as manually set
-    });
-    debug('Manual dominance changed to: $newDominant');
-  }
-
-  // Reset manual dominance when video state changes
-  void _resetManualDominance() {
-    _manualDominanceSet = false;
-    _updateAutoDominance();
-  }
-
-  Future<void> _toggleAudioPublish() async {
-    try {
-      if (_isAudioPublished) {
-        await _twilio.unpublishLocalAudio();
-        _showInfoSnackBar('Audio stopped');
-      } else {
-        await _twilio.publishLocalAudio();
-        _showSuccessSnackBar('Audio started');
-      }
-      setState(() => _isAudioPublished = !_isAudioPublished);
-    } catch (e) {
-      _showErrorSnackBar(
-          'Failed to ${_isAudioPublished ? 'stop' : 'start'} audio: ${e
-              .toString()}');
-    }
-  }
-
-  Future<void> _toggleVideoPublish() async {
-    try {
-      if (_isVideoPublished) {
-        await _twilio.unpublishLocalVideo();
-        _showInfoSnackBar('Video stopped');
-      } else {
-        await _twilio.publishLocalVideo();
-        _showSuccessSnackBar('Going live!');
-      }
-      setState(() {
-        _isVideoPublished = !_isVideoPublished;
-        _resetManualDominance();
-      });
-    } catch (e) {
-      _showErrorSnackBar(
-          'Failed to ${_isVideoPublished ? 'stop' : 'start'} video: ${e
-              .toString()}');
-    }
-  }
-
-  Future<void> _toggleAudio() async {
-    try {
-      final enabled = await _twilio.toggleLocalAudio();
-      setState(() => _isAudioEnabled = enabled);
-      _showInfoSnackBar(enabled ? 'Audio unmuted' : 'Audio muted');
-    } catch (e) {
-      _showErrorSnackBar('Failed to toggle audio: ${e.toString()}');
-    }
-  }
-
-  Future<void> _toggleVideo() async {
-    try {
-      final enabled = await _twilio.toggleLocalVideo();
-      setState(() => _isVideoEnabled = enabled);
-      _showInfoSnackBar(enabled ? 'Camera on' : 'Camera off');
-    } catch (e) {
-      _showErrorSnackBar('Failed to toggle camera: ${e.toString()}');
-    }
-  }
-
-  Future<void> _switchCamera() async {
-    try {
-      await _twilio.switchCamera();
-      setState(() => _isFrontCamera = !_isFrontCamera);
-      _showInfoSnackBar(
-          'Camera switched to ${_isFrontCamera ? 'front' : 'back'}');
-    } catch (e) {
-      _showErrorSnackBar('Failed to switch camera: ${e.toString()}');
-    }
-  }
-
-  Future<void> _leaveCall() async {
-    try {
-      await _twilio.disconnect();
-    } catch (e) {
-      _showErrorSnackBar('Failed to leave call: ${e.toString()}');
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -408,14 +460,12 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
             // Main content based on connection state
             if (_connectionState == ConnectionState.connected)
               _buildConnectedView()
+            else if (_connectionState == ConnectionState.connecting)
+              _buildConnectingView()
+            else if (_connectionState == ConnectionState.failed)
+              _buildErrorView()
             else
-              if (_connectionState == ConnectionState.connecting)
-                _buildConnectingView()
-              else
-                if (_connectionState == ConnectionState.failed)
-                  _buildErrorView()
-                else
-                  _buildDisconnectedView(),
+              _buildDisconnectedView(),
 
             // Status indicators
             _buildStatusIndicators(),
@@ -443,7 +493,7 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
           ),
         ),
 
-        // Control panel
+        // Control panel with integrated torch
         _buildControlPanel(),
       ],
     );
@@ -472,19 +522,13 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
             const SizedBox(height: 8),
             Text(
               widget.roomName,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 14,
-              ),
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
             ),
             if (_reconnectAttempts > 0) ...[
               const SizedBox(height: 16),
               Text(
-                'Reconnecting... (Attempt ${_reconnectAttempts})',
-                style: const TextStyle(
-                  color: Colors.orange,
-                  fontSize: 12,
-                ),
+                'Reconnecting... (Attempt $_reconnectAttempts)',
+                style: const TextStyle(color: Colors.orange, fontSize: 12),
               ),
             ],
           ],
@@ -501,11 +545,7 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
-              Icons.error_outline,
-              color: Colors.red,
-              size: 64,
-            ),
+            const Icon(Icons.error_outline, color: Colors.red, size: 64),
             const SizedBox(height: 24),
             const Text(
               'Connection Failed',
@@ -518,10 +558,7 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
             const SizedBox(height: 16),
             Text(
               _lastError ?? 'Unknown error occurred',
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 14,
-              ),
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 32),
@@ -560,11 +597,7 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
-              Icons.call_end,
-              color: Colors.red,
-              size: 64,
-            ),
+            const Icon(Icons.call_end, color: Colors.red, size: 64),
             const SizedBox(height: 24),
             const Text(
               'Call Ended',
@@ -578,20 +611,14 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
             if (_lastError != null && _lastError!.isNotEmpty) ...[
               Text(
                 _lastError!,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 14,
-                ),
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
             ],
             const Text(
               'What would you like to do?',
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 16,
-              ),
+              style: TextStyle(color: Colors.white70, fontSize: 16),
             ),
             const SizedBox(height: 32),
             Row(
@@ -604,7 +631,10 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
                     foregroundColor: Colors.white,
                   ),
                   icon: const Icon(
-                      Icons.exit_to_app, size: 18, color: Colors.white),
+                    Icons.exit_to_app,
+                    size: 18,
+                    color: Colors.white,
+                  ),
                   label: const Text('Leave'),
                 ),
                 ElevatedButton.icon(
@@ -658,19 +688,21 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
                         ElevatedButton.icon(
                           onPressed: _toggleVideoPublish,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: _isVideoPublished
-                                ? Colors.red
-                                : Colors.green,
+                            backgroundColor:
+                                _isVideoPublished ? Colors.red : Colors.green,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 6),
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(20),
                             ),
                           ),
                           icon: Icon(
-                            _isVideoPublished ? Icons.videocam_off : Icons
-                                .videocam,
+                            _isVideoPublished
+                                ? Icons.videocam_off
+                                : Icons.videocam,
                             size: 18,
                           ),
                           label: FittedBox(
@@ -678,7 +710,9 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
                             child: Text(
                               _isVideoPublished ? 'Stop Video' : 'Go Live',
                               style: const TextStyle(
-                                  fontSize: 11, fontWeight: FontWeight.bold),
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
                               maxLines: 1,
                             ),
                           ),
@@ -698,12 +732,15 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
                         ElevatedButton.icon(
                           onPressed: _toggleAudioPublish,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: _isAudioPublished
-                                ? Colors.blue
-                                : Colors.grey[600],
+                            backgroundColor:
+                                _isAudioPublished
+                                    ? Colors.blue
+                                    : Colors.grey[600],
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 6),
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(20),
                             ),
@@ -717,7 +754,9 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
                             child: Text(
                               _isAudioPublished ? 'Stop Audio' : 'Join Audio',
                               style: const TextStyle(
-                                  fontSize: 11, fontWeight: FontWeight.bold),
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
                               maxLines: 1,
                             ),
                           ),
@@ -737,17 +776,18 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
                         // Audio mute toggle
                         Container(
                           decoration: BoxDecoration(
-                            color: _isAudioEnabled ? Colors.white.withValues(
-                                alpha:
-                                0.9) : Colors.red,
+                            color:
+                                _isAudioEnabled
+                                    ? Colors.white.withValues(alpha: 0.9)
+                                    : Colors.red,
                             shape: BoxShape.circle,
                           ),
                           child: IconButton(
                             onPressed: _isAudioPublished ? _toggleAudio : null,
                             icon: Icon(
                               _isAudioEnabled ? Icons.mic : Icons.mic_off,
-                              color: _isAudioEnabled ? Colors.black : Colors
-                                  .white,
+                              color:
+                                  _isAudioEnabled ? Colors.black : Colors.white,
                               size: 20,
                             ),
                             tooltip: _isAudioEnabled ? 'Mute' : 'Unmute',
@@ -759,23 +799,26 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
                         // Video enable toggle
                         Container(
                           decoration: BoxDecoration(
-                            color: _isVideoEnabled ? Colors.white.withValues(
-                                alpha:
-                                0.9) : Colors.red,
+                            color:
+                                _isVideoEnabled
+                                    ? Colors.white.withValues(alpha: 0.9)
+                                    : Colors.red,
                             shape: BoxShape.circle,
                           ),
                           child: IconButton(
                             onPressed: _isVideoPublished ? _toggleVideo : null,
                             icon: Icon(
-                              _isVideoEnabled ? Icons.videocam : Icons
-                                  .videocam_off,
-                              color: _isVideoEnabled ? Colors.black : Colors
-                                  .white,
+                              _isVideoEnabled
+                                  ? Icons.videocam
+                                  : Icons.videocam_off,
+                              color:
+                                  _isVideoEnabled ? Colors.black : Colors.white,
                               size: 20,
                             ),
-                            tooltip: _isVideoEnabled
-                                ? 'Turn off camera'
-                                : 'Turn on camera',
+                            tooltip:
+                                _isVideoEnabled
+                                    ? 'Turn off camera'
+                                    : 'Turn on camera',
                           ),
                         ),
 
@@ -797,6 +840,38 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
                             tooltip: 'Switch camera',
                           ),
                         ),
+
+                        const SizedBox(width: 6),
+
+                        // TORCH/FLASH CONTROL - NEW!
+                        Container(
+                          decoration: BoxDecoration(
+                            color:
+                                _isTorchOn
+                                    ? Colors.orange
+                                    : (_isTorchAvailable
+                                        ? Colors.white.withValues(alpha: 0.9)
+                                        : Colors.grey[400]),
+                            shape: BoxShape.circle,
+                          ),
+                          child: IconButton(
+                            onPressed:
+                                (_isVideoPublished && _isTorchAvailable)
+                                    ? _toggleTorch
+                                    : null,
+                            icon: Icon(
+                              _isTorchOn ? Icons.flash_on : Icons.flash_off,
+                              color: _isTorchOn ? Colors.white : Colors.black,
+                              size: 20,
+                            ),
+                            tooltip:
+                                _isTorchAvailable
+                                    ? (_isTorchOn
+                                        ? 'Turn off flash'
+                                        : 'Turn on flash')
+                                    : 'Flash not available',
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -815,7 +890,9 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
                             backgroundColor: Colors.red,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 6),
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(20),
                             ),
@@ -826,7 +903,9 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
                             child: Text(
                               'Leave',
                               style: TextStyle(
-                                  fontSize: 11, fontWeight: FontWeight.bold),
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                         ),
@@ -863,9 +942,11 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
                 const SizedBox(width: 4),
                 Text(
                   _getConnectionStatusText(),
-                  style: const TextStyle(color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ],
             ),
@@ -877,7 +958,9 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
               padding: const EdgeInsets.only(top: 8),
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 6),
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.black54,
                   borderRadius: BorderRadius.circular(16),
@@ -903,7 +986,9 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
               padding: const EdgeInsets.only(top: 8),
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 6),
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.red.withValues(alpha: 0.8),
                   borderRadius: BorderRadius.circular(16),
@@ -911,12 +996,46 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.fiber_manual_record, color: Colors.white,
-                        size: 12),
+                    const Icon(
+                      Icons.fiber_manual_record,
+                      color: Colors.white,
+                      size: 12,
+                    ),
                     const SizedBox(width: 4),
                     Text(
                       _isVideoPublished ? 'LIVE' : 'AUDIO ONLY',
                       style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // Torch status indicator
+          if (_isTorchOn && _connectionState == ConnectionState.connected)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.8),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.flash_on, color: Colors.white, size: 12),
+                    const SizedBox(width: 4),
+                    const Text(
+                      'FLASH ON',
+                      style: TextStyle(
                         color: Colors.white,
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
@@ -941,11 +1060,18 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
           color: Colors.black54,
           borderRadius: BorderRadius.circular(4),
         ),
-        child: Text(
-          'Dominant: $_dominantParticipant${_manualDominanceSet
-              ? ' (Manual)'
-              : ' (Auto)'}',
-          style: const TextStyle(color: Colors.white, fontSize: 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Dominant: $_dominantParticipant${_manualDominanceSet ? ' (Manual)' : ' (Auto)'}',
+              style: const TextStyle(color: Colors.white, fontSize: 10),
+            ),
+            Text(
+              'Torch: Available=$_isTorchAvailable, On=$_isTorchOn',
+              style: const TextStyle(color: Colors.white, fontSize: 10),
+            ),
+          ],
         ),
       ),
     );

@@ -179,7 +179,7 @@ class EnhancedParticipantsGrid extends StatelessWidget {
                         ),
                         decoration: BoxDecoration(
                           color: (isDominantRemote ? Colors.blue : Colors.green)
-                              .withOpacity(0.8),
+                              .withValues(alpha: 0.8),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
@@ -286,7 +286,7 @@ class EnhancedParticipantsGrid extends StatelessWidget {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.8),
+                    color: Colors.blue.withValues(alpha: 0.8),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: const Text(

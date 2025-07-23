@@ -68,3 +68,19 @@ class TrackUnsubscribedEvent extends TwilioEvent {
     required this.trackType,
   });
 }
+
+class TorchStatusChangedEvent extends TwilioEvent {
+  final bool isOn;
+  final bool isAvailable;
+
+  TorchStatusChangedEvent({
+    required this.isOn,
+    required this.isAvailable,
+  });
+}
+
+class TorchErrorEvent extends TwilioEvent {
+  final String error;
+
+  TorchErrorEvent(this.error);
+}

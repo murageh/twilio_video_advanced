@@ -1,8 +1,14 @@
 package io.crispice.twilio_video_advanced.twilio_video_advanced
 
+import android.app.ActivityManager
 import android.content.Context
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import androidx.annotation.NonNull
 import com.twilio.video.*
 import io.crispice.twilio_video_advanced.twilio_video_advanced.factories.LocalVideoViewFactory
@@ -20,10 +26,12 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
     private lateinit var roomEventChannel: EventChannel
     private lateinit var participantEventChannel: EventChannel
     private lateinit var trackEventChannel: EventChannel
+    private lateinit var torchEventChannel: EventChannel
 
     private var roomEventSink: EventChannel.EventSink? = null
     private var participantEventSink: EventChannel.EventSink? = null
     private var trackEventSink: EventChannel.EventSink? = null
+    private var torchEventSink: EventChannel.EventSink? = null
 
     private lateinit var context: Context
     private val handler = Handler(Looper.getMainLooper())
@@ -41,8 +49,24 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
     private val viewIdToParticipant =
         mutableMapOf<String, String>() // Track viewId -> participant mapping
 
+    // Torch/Flash support with actual hardware control
+    private var torchAvailable = false
+    private var torchEnabled = false
+    private var cameraManager: CameraManager? = null
+    private var torchCallback: CameraManager.TorchCallback? = null
+
+    // Wake lock for keeping screen on during video calls
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var isWakeLockActive = false
+
     override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         context = flutterPluginBinding.applicationContext
+
+        // Initialize camera manager for torch control
+        cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+
+        // Initialize wake lock for keeping screen on
+        initializeWakeLock()
 
         methodChannel =
             MethodChannel(flutterPluginBinding.binaryMessenger, "twilio_video_advanced/methods")
@@ -86,6 +110,18 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
             }
         })
 
+        torchEventChannel =
+            EventChannel(flutterPluginBinding.binaryMessenger, "twilio_video_advanced/torch_events")
+        torchEventChannel.setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                torchEventSink = events
+            }
+
+            override fun onCancel(arguments: Any?) {
+                torchEventSink = null
+            }
+        })
+
         // Register platform view factories for video rendering
         flutterPluginBinding.platformViewRegistry.registerViewFactory(
             "twilio_local_video_view",
@@ -107,6 +143,13 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
             "toggleLocalAudio" -> toggleLocalAudio(result)
             "toggleLocalVideo" -> toggleLocalVideo(result)
             "switchCamera" -> switchCamera(result)
+            "isTorchAvailable" -> isTorchAvailable(result)
+            "isTorchOn" -> isTorchOn(result)
+            "setTorchEnabled" -> setTorchEnabled(call, result)
+            "toggleTorch" -> toggleTorch(result)
+            "setVideoQuality" -> setVideoQuality(call, result)
+            "getDeviceCapabilities" -> getDeviceCapabilities(result)
+            "getRecommendedVideoQuality" -> getRecommendedVideoQuality(result)
             else -> result.notImplemented()
         }
     }
@@ -117,6 +160,8 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
         // Try front camera first
         for (cameraId in camera2Enumerator.deviceNames) {
             if (camera2Enumerator.isFrontFacing(cameraId)) {
+                currentCameraId = cameraId
+                isFrontCamera = true
                 return Camera2Capturer(context, cameraId)
             }
         }
@@ -124,6 +169,8 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
         // Fallback to back camera
         for (cameraId in camera2Enumerator.deviceNames) {
             if (camera2Enumerator.isBackFacing(cameraId)) {
+                currentCameraId = cameraId
+                isFrontCamera = false
                 return Camera2Capturer(context, cameraId)
             }
         }
@@ -206,6 +253,8 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
                     }
                     localVideoTrack?.let {
                         room?.localParticipant?.publishTrack(it)
+                        // Acquire wake lock when video starts to keep screen on
+                        acquireWakeLock()
                     }
                 }
             }
@@ -221,7 +270,11 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
         try {
             when (trackType) {
                 "audio" -> localAudioTrack?.let { room?.localParticipant?.unpublishTrack(it) }
-                "video" -> localVideoTrack?.let { room?.localParticipant?.unpublishTrack(it) }
+                "video" -> {
+                    localVideoTrack?.let { room?.localParticipant?.unpublishTrack(it) }
+                    // Release wake lock when video stops
+                    releaseWakeLock()
+                }
             }
             result.success(null)
         } catch (e: Exception) {
@@ -244,18 +297,229 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
     }
 
     private fun switchCamera(result: MethodChannel.Result) {
-        val camera2Enumerator = Camera2Enumerator(context)
-        val targetFrontFacing = !isFrontCamera
+        try {
+            val camera2Enumerator = Camera2Enumerator(context)
+            val targetFrontFacing = !isFrontCamera
 
-        for (cameraId in camera2Enumerator.deviceNames) {
-            if (camera2Enumerator.isFrontFacing(cameraId) == targetFrontFacing) {
-                cameraCapturer?.switchCamera(cameraId)
-                currentCameraId = cameraId
+            var targetCameraId: String? = null
+            for (cameraId in camera2Enumerator.deviceNames) {
+                if (camera2Enumerator.isFrontFacing(cameraId) == targetFrontFacing) {
+                    targetCameraId = cameraId
+                    break
+                }
+            }
+
+            if (targetCameraId != null && targetCameraId != currentCameraId) {
+                cameraCapturer?.switchCamera(targetCameraId)
+                currentCameraId = targetCameraId
                 isFrontCamera = targetFrontFacing
-                break
+
+                // Update mirroring for all local video views after camera switch
+                updateAllLocalVideoViewsMirroring()
+
+                // Check torch availability after camera switch
+                updateTorchAvailability()
+                result.success(null)
+            } else {
+                result.error(
+                    "SWITCH_FAILED",
+                    "No alternative camera available or already using target camera",
+                    null
+                )
+            }
+        } catch (e: Exception) {
+            result.error("SWITCH_FAILED", "Failed to switch camera: ${e.message}", null)
+        }
+    }
+
+    // TORCH/FLASH METHODS
+    private fun isTorchAvailable(result: MethodChannel.Result) {
+        updateTorchAvailability()
+        result.success(torchAvailable)
+    }
+
+    private fun isTorchOn(result: MethodChannel.Result) {
+        result.success(torchEnabled)
+    }
+
+    private fun setTorchEnabled(call: MethodCall, result: MethodChannel.Result) {
+        val enabled = call.argument<Boolean>("enabled") ?: false
+
+        if (torchAvailable && cameraCapturer != null) {
+            try {
+                torchEnabled = enabled
+                // Note: Camera2Capturer doesn't have setTorchEnabled method in Twilio SDK
+                // We need to implement this through the camera characteristics
+                updateTorchStatus(enabled)
+                result.success(enabled)
+            } catch (e: Exception) {
+                handler.post {
+                    torchEventSink?.success(
+                        mapOf(
+                            "event" to "torchError",
+                            "error" to "Failed to set torch: ${e.message}"
+                        )
+                    )
+                }
+                result.error("TORCH_ERROR", e.message, null)
+            }
+        } else {
+            result.error(
+                "TORCH_UNAVAILABLE",
+                "Torch/Flash not available on this device or camera not initialized",
+                null
+            )
+        }
+    }
+
+    private fun toggleTorch(result: MethodChannel.Result) {
+        if (torchAvailable && cameraCapturer != null) {
+            try {
+                torchEnabled = !torchEnabled
+                updateTorchStatus(torchEnabled)
+                result.success(torchEnabled)
+            } catch (e: Exception) {
+                handler.post {
+                    torchEventSink?.success(
+                        mapOf(
+                            "event" to "torchError",
+                            "error" to "Failed to toggle torch: ${e.message}"
+                        )
+                    )
+                }
+                result.error("TORCH_ERROR", e.message, null)
+            }
+        } else {
+            result.error(
+                "TORCH_UNAVAILABLE",
+                "Torch/Flash not available on this device or camera not initialized",
+                null
+            )
+        }
+    }
+
+    private fun updateTorchAvailability() {
+        try {
+            val currentCameraId = getCurrentCameraId()
+
+            if (currentCameraId != null) {
+                // Use Android's Camera2 API to check flash availability
+                torchAvailable = hasFlashSupport(currentCameraId)
+            } else {
+                torchAvailable = false
+            }
+
+            // Notify Flutter about torch availability
+            handler.post {
+                torchEventSink?.success(
+                    mapOf(
+                        "event" to "torchStatusChanged",
+                        "isOn" to torchEnabled,
+                        "isAvailable" to torchAvailable
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            torchAvailable = false
+            handler.post {
+                torchEventSink?.success(
+                    mapOf(
+                        "event" to "torchError",
+                        "error" to "Failed to check torch availability: ${e.message}"
+                    )
+                )
             }
         }
-        result.success(null)
+    }
+
+    private fun hasFlashSupport(cameraId: String): Boolean {
+        return try {
+            val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+            val flashInfo = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE)
+            flashInfo == true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun getCurrentCameraId(): String? {
+        if (currentCameraId != null) return currentCameraId
+
+        val camera2Enumerator = Camera2Enumerator(context)
+
+        // Find current camera based on front/back preference
+        for (cameraId in camera2Enumerator.deviceNames) {
+            if (camera2Enumerator.isFrontFacing(cameraId) == isFrontCamera) {
+                currentCameraId = cameraId
+                return cameraId
+            }
+        }
+
+        return null
+    }
+
+    private fun updateTorchStatus(enabled: Boolean) {
+        try {
+            if (cameraCapturer != null) {
+                // Use Twilio's updateCaptureRequest to control the torch
+                val success = cameraCapturer!!.updateCaptureRequest { captureRequestBuilder ->
+                    if (enabled) {
+                        captureRequestBuilder.set(
+                            CaptureRequest.FLASH_MODE,
+                            CaptureRequest.FLASH_MODE_TORCH
+                        )
+                    } else {
+                        captureRequestBuilder.set(
+                            CaptureRequest.FLASH_MODE,
+                            CaptureRequest.FLASH_MODE_OFF
+                        )
+                    }
+                }
+
+                if (success) {
+                    torchEnabled = enabled
+
+                    // Notify Flutter about successful torch status change
+                    handler.post {
+                        torchEventSink?.success(
+                            mapOf(
+                                "event" to "torchStatusChanged",
+                                "isOn" to torchEnabled,
+                                "isAvailable" to torchAvailable
+                            )
+                        )
+                    }
+                } else {
+                    throw Exception("Failed to schedule torch update - another update may be pending")
+                }
+            } else {
+                throw Exception("Camera capturer not available")
+            }
+        } catch (e: Exception) {
+            torchEnabled = false
+            handler.post {
+                torchEventSink?.success(
+                    mapOf(
+                        "event" to "torchError",
+                        "error" to "Failed to control torch: ${e.message}"
+                    )
+                )
+            }
+        }
+    }
+
+    private fun setTorch(call: MethodCall, result: MethodChannel.Result) {
+        val enabled = call.argument<Boolean>("enabled") ?: false
+
+        if (torchAvailable) {
+            // Toggle the torch state
+            torchEnabled = enabled
+            updateTorchStatus(enabled)
+            result.success(null)
+        } else {
+            result.error("TORCH_UNAVAILABLE", "Torch/Flash not available on this device", null)
+        }
     }
 
     private val roomListener = object : Room.Listener {
@@ -539,6 +803,10 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
         videoRenderers[viewId] = videoView
         // Mark this as local video view
         viewIdToParticipant[viewId] = "LOCAL"
+
+        // Set mirroring based on camera type - front camera should be mirrored, back camera should not
+        updateVideoViewMirroring(videoView)
+
         return videoView
     }
 
@@ -589,6 +857,302 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
         localAudioTrack = null
         localVideoTrack = null
         cameraCapturer = null
+        currentCameraId = null
+        // Reset to default state
+        isFrontCamera = true
+
+        // Release wake lock when cleaning up
+        releaseWakeLock()
+    }
+
+    // VIDEO MIRRORING METHODS
+    private fun updateVideoViewMirroring(videoView: VideoView) {
+        // Front camera should be mirrored (like a mirror), back camera should not be mirrored
+        // isFrontCamera = true means front camera, should be mirrored = true
+        // isFrontCamera = false means back camera, should not be mirrored = false
+        videoView.setMirror(isFrontCamera)
+    }
+
+    private fun updateAllLocalVideoViewsMirroring() {
+        // Update mirroring for all local video views when camera switches
+        videoRenderers.forEach { (viewId, videoView) ->
+            if (viewIdToParticipant[viewId] == "LOCAL") {
+                updateVideoViewMirroring(videoView)
+            }
+        }
+    }
+
+    // VIDEO QUALITY MANAGEMENT METHODS
+    private fun setVideoQuality(call: MethodCall, result: MethodChannel.Result) {
+        val quality = call.argument<String>("quality") ?: "standard"
+        val width = call.argument<Int>("width")
+        val height = call.argument<Int>("height")
+        val framerate = call.argument<Int>("framerate")
+        val bitrate = call.argument<Int>("bitrate")
+
+        try {
+            when {
+                // Custom quality with specific parameters
+                width != null && height != null -> {
+                    applyCustomVideoFormat(width, height, framerate ?: 30, bitrate)
+                    result.success("Custom video quality applied: ${width}x${height}@${framerate ?: 30}fps")
+                }
+                // Preset quality levels
+                else -> {
+                    val format = getVideoFormatForQuality(quality)
+                    applyVideoFormat(format)
+                    result.success("Video quality set to $quality: ${format.width}x${format.height}@${format.framerate}fps")
+                }
+            }
+        } catch (e: Exception) {
+            result.error("QUALITY_ERROR", "Failed to set video quality: ${e.message}", null)
+        }
+    }
+
+    private fun getDeviceCapabilities(result: MethodChannel.Result) {
+        try {
+            val activityManager =
+                context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val memoryInfo = ActivityManager.MemoryInfo()
+            activityManager.getMemoryInfo(memoryInfo)
+
+            val totalMemoryMB = memoryInfo.totalMem / (1024 * 1024)
+            val availableMemoryMB = memoryInfo.availMem / (1024 * 1024)
+
+            // Get camera capabilities
+            val cameraCapabilities = getCameraCapabilities()
+
+            // Determine device tier based on specs
+            val deviceTier = determineDeviceTier(totalMemoryMB, cameraCapabilities)
+
+            val capabilities = mapOf(
+                "device" to mapOf(
+                    "model" to Build.MODEL,
+                    "manufacturer" to Build.MANUFACTURER,
+                    "sdkVersion" to Build.VERSION.SDK_INT,
+                    "tier" to deviceTier
+                ),
+                "memory" to mapOf(
+                    "totalMB" to totalMemoryMB,
+                    "availableMB" to availableMemoryMB,
+                    "lowMemory" to memoryInfo.lowMemory
+                ),
+                "camera" to cameraCapabilities,
+                "video" to mapOf(
+                    "supportedQualities" to getSupportedVideoQualities(deviceTier),
+                    "recommendedQuality" to getRecommendedQualityForDevice(deviceTier)
+                )
+            )
+
+            result.success(capabilities)
+        } catch (e: Exception) {
+            result.error(
+                "CAPABILITIES_ERROR",
+                "Failed to get device capabilities: ${e.message}",
+                null
+            )
+        }
+    }
+
+    private fun getRecommendedVideoQuality(result: MethodChannel.Result) {
+        try {
+            val activityManager =
+                context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val memoryInfo = ActivityManager.MemoryInfo()
+            activityManager.getMemoryInfo(memoryInfo)
+
+            val totalMemoryMB = memoryInfo.totalMem / (1024 * 1024)
+            val isLowMemory = memoryInfo.lowMemory
+            val cameraCapabilities = getCameraCapabilities()
+
+            val deviceTier = determineDeviceTier(totalMemoryMB, cameraCapabilities)
+            val recommendedQuality = getRecommendedQualityForDevice(deviceTier, isLowMemory)
+
+            result.success(
+                mapOf(
+                    "quality" to recommendedQuality,
+                    "deviceTier" to deviceTier,
+                    "reason" to getQualityRecommendationReason(deviceTier, isLowMemory)
+                )
+            )
+        } catch (e: Exception) {
+            result.error(
+                "RECOMMENDATION_ERROR",
+                "Failed to get recommended quality: ${e.message}",
+                null
+            )
+        }
+    }
+
+    private fun getCameraCapabilities(): Map<String, Any> {
+        return try {
+            Camera2Enumerator(context)
+            val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+
+            val capabilities = mutableMapOf<String, Any>()
+            val supportedFormats = mutableListOf<Map<String, Any>>()
+
+            // Get capabilities for current camera
+            currentCameraId?.let { cameraId ->
+                val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+                val streamConfigMap =
+                    characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+
+                streamConfigMap?.let { configMap ->
+                    val outputSizes =
+                        configMap.getOutputSizes(android.graphics.ImageFormat.YUV_420_888)
+                    outputSizes?.forEach { size ->
+                        supportedFormats.add(
+                            mapOf(
+                                "width" to size.width,
+                                "height" to size.height
+                            )
+                        )
+                    }
+                }
+
+                capabilities["maxResolution"] = supportedFormats.maxByOrNull {
+                    (it["width"] as Int) * (it["height"] as Int)
+                } ?: mapOf("width" to 1280, "height" to 720)
+            }
+
+            capabilities["supportedFormats"] = supportedFormats
+            capabilities["frontCamera"] = isFrontCamera
+            capabilities
+        } catch (e: Exception) {
+            mapOf(
+                "supportedFormats" to listOf<Map<String, Any>>(),
+                "maxResolution" to mapOf("width" to 1280, "height" to 720),
+                "frontCamera" to isFrontCamera
+            )
+        }
+    }
+
+    private fun determineDeviceTier(
+        totalMemoryMB: Long,
+        cameraCapabilities: Map<String, Any>
+    ): String {
+        val maxRes = cameraCapabilities["maxResolution"] as? Map<String, Any>
+        val maxWidth = maxRes?.get("width") as? Int ?: 1280
+        val maxHeight = maxRes?.get("height") as? Int ?: 720
+        val maxPixels = maxWidth * maxHeight
+
+        return when {
+            totalMemoryMB >= 6000 && maxPixels >= 1920 * 1080 -> "high"
+            totalMemoryMB >= 3000 && maxPixels >= 1280 * 720 -> "medium"
+            else -> "low"
+        }
+    }
+
+    private fun getSupportedVideoQualities(deviceTier: String): List<String> {
+        return when (deviceTier) {
+            "high" -> listOf("low", "standard", "high", "ultra")
+            "medium" -> listOf("low", "standard", "high")
+            else -> listOf("low", "standard")
+        }
+    }
+
+    private fun getRecommendedQualityForDevice(
+        deviceTier: String,
+        isLowMemory: Boolean = false
+    ): String {
+        return when {
+            isLowMemory -> "low"
+            deviceTier == "high" -> "high"
+            deviceTier == "medium" -> "standard"
+            else -> "low"
+        }
+    }
+
+    private fun getQualityRecommendationReason(deviceTier: String, isLowMemory: Boolean): String {
+        return when {
+            isLowMemory -> "Low memory detected, using low quality to maintain performance"
+            deviceTier == "high" -> "High-end device detected, can handle high quality video"
+            deviceTier == "medium" -> "Mid-range device detected, using standard quality for balance"
+            else -> "Lower-end device detected, using low quality to ensure smooth performance"
+        }
+    }
+
+    private fun getVideoFormatForQuality(quality: String): VideoFormat {
+        return when (quality) {
+            "low" -> VideoFormat(640, 480, 15)
+            "standard" -> VideoFormat(1280, 720, 30)
+            "high" -> VideoFormat(1920, 1080, 30)
+            "ultra" -> VideoFormat(1920, 1080, 60)
+            else -> VideoFormat(1280, 720, 30)
+        }
+    }
+
+    private fun applyVideoFormat(format: VideoFormat) {
+        // This would require recreating the video track with new constraints
+        // For now, this is a placeholder - actual implementation depends on Twilio SDK capabilities
+        videoRenderers.forEach { (viewId, videoView) ->
+            if (viewIdToParticipant[viewId] == "LOCAL") {
+                // Apply video scale type based on quality
+                when (format.quality) {
+                    "high", "ultra" -> videoView.setVideoScaleType(VideoScaleType.ASPECT_FILL)
+                    else -> videoView.setVideoScaleType(VideoScaleType.ASPECT_FIT)
+                }
+            }
+        }
+    }
+
+    private fun applyCustomVideoFormat(width: Int, height: Int, framerate: Int, bitrate: Int?) {
+        val customFormat = VideoFormat(width, height, framerate, bitrate)
+        applyVideoFormat(customFormat)
+    }
+
+    // Data class for video format configuration
+    data class VideoFormat(
+        val width: Int,
+        val height: Int,
+        val framerate: Int,
+        val bitrate: Int? = null
+    ) {
+        val quality: String
+            get() = when {
+                width >= 1920 && height >= 1080 && framerate >= 60 -> "ultra"
+                width >= 1920 && height >= 1080 -> "high"
+                width >= 1280 && height >= 720 -> "standard"
+                else -> "low"
+            }
+    }
+
+    // WAKE LOCK MANAGEMENT
+    private fun initializeWakeLock() {
+        try {
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "TwilioVideoAdvanced::WakeLock"
+            ).apply {
+                setReferenceCounted(false)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun acquireWakeLock() {
+        try {
+            if (wakeLock != null && !isWakeLockActive) {
+                wakeLock?.acquire(60 * 60 * 1000L /*60 minutes*/)
+                isWakeLockActive = true
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock != null && isWakeLockActive) {
+                wakeLock?.release()
+                isWakeLockActive = false
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {

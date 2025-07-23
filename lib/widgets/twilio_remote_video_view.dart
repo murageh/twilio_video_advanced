@@ -42,7 +42,7 @@ class _TwilioRemoteVideoViewState extends State<TwilioRemoteVideoView> {
   @override
   Widget build(BuildContext context) {
     debug('Building remote video view');
-    return Container(
+    return SizedBox(
       width: widget.width,
       height: widget.height,
       child: ClipRRect(

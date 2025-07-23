@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,12 +9,12 @@ class TwilioLocalVideoView extends StatefulWidget {
   final bool mirror;
 
   const TwilioLocalVideoView({
-    Key? key,
+    super.key,
     this.width,
     this.height,
     this.fit = BoxFit.cover,
     this.mirror = true,
-  }) : super(key: key);
+  });
 
   @override
   State<TwilioLocalVideoView> createState() => _TwilioLocalVideoViewState();
@@ -47,19 +45,14 @@ class _TwilioLocalVideoViewState extends State<TwilioLocalVideoView> {
     return Container(
       width: widget.width,
       height: widget.height,
-      child: Transform(
-        alignment: Alignment.center,
-        transform:
-            widget.mirror ? Matrix4.rotationY(math.pi) : Matrix4.identity(),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: AndroidView(
-            viewType: 'twilio_local_video_view',
-            creationParamsCodec: const StandardMessageCodec(),
-            onPlatformViewCreated: (int id) {
-              debug('Platform view created with ID: $id');
-            },
-          ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: AndroidView(
+          viewType: 'twilio_local_video_view',
+          creationParamsCodec: const StandardMessageCodec(),
+          onPlatformViewCreated: (int id) {
+            debug('Platform view created with ID: $id');
+          },
         ),
       ),
     );
