@@ -49,6 +49,17 @@ class LocalParticipant {
   /// When `false`, this participant is not broadcasting video (observer mode for video).
   final bool isVideoPublished;
 
+  /// Custom display name for this participant.
+  ///
+  /// This is a user-friendly name that can be set at runtime to override
+  /// the default identity. If null, the identity will be used for display.
+  final String? displayName;
+
+  /// The name to display in the UI.
+  ///
+  /// Returns [displayName] if set, otherwise returns [identity].
+  String get name => displayName ?? identity;
+
   /// Creates a local participant.
   LocalParticipant({
     required this.identity,
@@ -57,6 +68,7 @@ class LocalParticipant {
     required this.isVideoEnabled,
     required this.isAudioPublished,
     required this.isVideoPublished,
+    this.displayName,
   });
 
   /// Creates a [LocalParticipant] from JSON data.
@@ -71,6 +83,31 @@ class LocalParticipant {
       isVideoEnabled: json['isVideoEnabled'],
       isAudioPublished: json['isAudioPublished'],
       isVideoPublished: json['isVideoPublished'],
+      displayName: json['displayName'], // This will be null from native initially
+    );
+  }
+
+  /// Creates a copy of this participant with some fields replaced.
+  ///
+  /// This is useful for updating participant information while maintaining
+  /// immutability.
+  LocalParticipant copyWith({
+    String? identity,
+    String? sid,
+    bool? isAudioEnabled,
+    bool? isVideoEnabled,
+    bool? isAudioPublished,
+    bool? isVideoPublished,
+    String? displayName,
+  }) {
+    return LocalParticipant(
+      identity: identity ?? this.identity,
+      sid: sid ?? this.sid,
+      isAudioEnabled: isAudioEnabled ?? this.isAudioEnabled,
+      isVideoEnabled: isVideoEnabled ?? this.isVideoEnabled,
+      isAudioPublished: isAudioPublished ?? this.isAudioPublished,
+      isVideoPublished: isVideoPublished ?? this.isVideoPublished,
+      displayName: displayName ?? this.displayName,
     );
   }
 }

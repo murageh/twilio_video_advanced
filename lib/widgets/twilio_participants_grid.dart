@@ -67,7 +67,7 @@ class TwilioParticipantsGrid extends StatelessWidget {
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    '${participant.identity} (${participant.sid})',
+                    '${participant.name} (${participant.sid})',
                     // Show SID for debugging
                     style: const TextStyle(color: Colors.white, fontSize: 12),
                   ),

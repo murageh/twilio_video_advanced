@@ -119,7 +119,7 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
             _participants.add(event.participant);
             _updateAutoDominance();
           });
-          _showInfoSnackBar('${event.participant.identity} joined');
+          _showInfoSnackBar('${event.participant.name} joined');
         }
       } else if (event is ParticipantDisconnectedEvent) {
         if (mounted) {
@@ -130,7 +130,7 @@ class _TwilioVideoCallScreenState extends State<TwilioVideoCallScreen> {
             }
             _updateAutoDominance();
           });
-          _showInfoSnackBar('${event.participant.identity} left');
+          _showInfoSnackBar('${event.participant.name} left');
         }
       } else if (event is DominantSpeakerChangedEvent) {
         if (mounted) {

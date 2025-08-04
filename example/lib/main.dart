@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:twilio_video_advanced/twilio_video_advanced.dart';
 import 'package:twilio_video_advanced_example/video_call_screen_complete.dart';
 
 import 'audio_device_test_screen.dart';
+import 'custom_name_test_screen.dart';
 import 'torch_test_screen.dart';
 import 'video_call_screen_with_torch.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 
 Future<void> main() async {
@@ -376,12 +376,70 @@ class _HomePageState extends State<HomePage> {
                               color: Colors.white),
                         ),
                       ),
-                      SizedBox(height: 8),
-                      Text(
-                        'Test flashlight functionality without joining a video call',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.orange[900],
+                      SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  CustomNameTestScreen(
+                                    roomName: 'cool room',
+                                    accessToken: patientToken,
+                                  ),
+                            ),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.purple[700],
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(horizontal: 18,
+                              vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          elevation: 2,
+                          minimumSize: Size(0, 0),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        icon: Icon(Icons.person_pin, color: Colors.white),
+                        label: Text(
+                          'Test Custom Names (Patient)',
+                          style: TextStyle(fontWeight: FontWeight.bold,
+                              color: Colors.white),
+                        ),
+                      ),
+                      SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  CustomNameTestScreen(
+                                    roomName: 'cool room',
+                                    accessToken: doctorToken,
+                                  ),
+                            ),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.purple[700],
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(horizontal: 18,
+                              vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          elevation: 2,
+                          minimumSize: Size(0, 0),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        icon: Icon(Icons.person_pin, color: Colors.white),
+                        label: Text(
+                          'Test Custom Names (Doctor)',
+                          style: TextStyle(fontWeight: FontWeight.bold,
+                              color: Colors.white),
                         ),
                       ),
                     ],

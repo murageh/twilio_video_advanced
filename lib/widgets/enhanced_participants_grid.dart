@@ -58,7 +58,7 @@ class EnhancedParticipantsGrid extends StatelessWidget {
           width: double.infinity,
           height: double.infinity,
         ),
-        label: participant.identity,
+        label: participant.name,
         isLocal: false,
       );
     }
@@ -183,7 +183,7 @@ class EnhancedParticipantsGrid extends StatelessWidget {
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
-                          isDominantRemote ? 'You' : remoteParticipant.identity,
+                          isDominantRemote ? 'You' : remoteParticipant.name,
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 10,
@@ -229,7 +229,7 @@ class EnhancedParticipantsGrid extends StatelessWidget {
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  isDominantRemote ? remoteParticipant.identity : 'You',
+                  isDominantRemote ? remoteParticipant.name : 'You',
                   style: const TextStyle(color: Colors.white, fontSize: 14),
                 ),
                 if (dominantSpeaker?.sid == remoteParticipant.sid &&
@@ -335,7 +335,7 @@ class EnhancedParticipantsGrid extends StatelessWidget {
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    participant.identity,
+                    participant.name,
                     style: const TextStyle(color: Colors.white, fontSize: 12),
                   ),
                 ),

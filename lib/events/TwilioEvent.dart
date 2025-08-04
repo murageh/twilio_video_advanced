@@ -297,3 +297,21 @@ class LocalVideoEnabledEvent extends TwilioEvent {
   /// Creates a local video enabled event.
   LocalVideoEnabledEvent(this.enabled);
 }
+
+/// Emitted when a participant's display name is updated.
+///
+/// This event is fired when [TwilioVideoAdvanced.setParticipantDisplayName]
+/// is called to update a participant's custom display name.
+class ParticipantDisplayNameChangedEvent extends TwilioEvent {
+  /// The SID of the participant whose display name changed.
+  final String participantSid;
+
+  /// The new display name.
+  final String displayName;
+
+  /// Creates a participant display name changed event.
+  ParticipantDisplayNameChangedEvent({
+    required this.participantSid,
+    required this.displayName,
+  });
+}

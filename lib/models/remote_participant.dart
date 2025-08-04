@@ -30,11 +30,23 @@ class RemoteParticipant {
   /// `false` if they have disconnected or are in the process of disconnecting.
   final bool isConnected;
 
+  /// Custom display name for this participant.
+  ///
+  /// This is a user-friendly name that can be set at runtime to override
+  /// the default identity. If null, the identity will be used for display.
+  final String? displayName;
+
+  /// The name to display in the UI.
+  ///
+  /// Returns [displayName] if set, otherwise returns [identity].
+  String get name => displayName ?? identity;
+
   /// Creates a remote participant.
   RemoteParticipant({
     required this.identity,
     required this.sid,
     required this.isConnected,
+    this.displayName,
   });
 
   /// Creates a [RemoteParticipant] from JSON data.
@@ -46,6 +58,48 @@ class RemoteParticipant {
       identity: json['identity'],
       sid: json['sid'],
       isConnected: json['isConnected'],
+      displayName: json['displayName'], // This will be null from native initially
     );
+  }
+
+  /// Creates a copy of this participant with some fields replaced.
+  ///
+  /// This is useful for updating participant information while maintaining
+  /// immutability.
+  RemoteParticipant copyWith({
+    String? identity,
+    String? sid,
+    bool? isConnected,
+    String? displayName,
+  }) {
+    return RemoteParticipant(
+      identity: identity ?? this.identity,
+      sid: sid ?? this.sid,
+      isConnected: isConnected ?? this.isConnected,
+      displayName: displayName ?? this.displayName,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is RemoteParticipant &&
+        other.identity == identity &&
+        other.sid == sid &&
+        other.isConnected == isConnected &&
+        other.displayName == displayName;
+  }
+
+  @override
+  int get hashCode {
+    return identity.hashCode ^
+    sid.hashCode ^
+    isConnected.hashCode ^
+    displayName.hashCode;
+  }
+
+  @override
+  String toString() {
+    return 'RemoteParticipant(identity: $identity, sid: $sid, isConnected: $isConnected, displayName: $displayName, name: $name)';
   }
 }

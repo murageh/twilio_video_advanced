@@ -752,6 +752,91 @@ class TwilioVideoAdvanced {
     await _methodChannel.invokeMethod('deactivateAudioDevice');
   }
 
+  /// Sets a custom display name for the local participant.
+  ///
+  /// This allows you to override the default identity with a more user-friendly name
+  /// for the local participant (current user).
+  ///
+  /// **Parameters:**
+  /// - [displayName]: The custom name to display in the UI for the local participant
+  ///
+  /// **Example:**
+  /// ```dart
+  /// // Set a friendly name for the local participant
+  /// await _twilio.setLocalDisplayName('Dr. Smith');
+  /// ```
+  Future<void> setLocalDisplayName(String displayName) async {
+    if (_currentRoom != null) {
+      // Update the local participant in the current room
+      final updatedLocalParticipant = _currentRoom!.localParticipant.copyWith(
+        displayName: displayName,
+      );
+
+      // Update the current room with the new local participant
+      _currentRoom = Room(
+        name: _currentRoom!.name,
+        sid: _currentRoom!.sid,
+        state: _currentRoom!.state,
+        localParticipant: updatedLocalParticipant,
+        remoteParticipants: _currentRoom!.remoteParticipants,
+      );
+
+      // Emit an event to notify listeners that local participant info changed
+      _eventController?.add(ParticipantDisplayNameChangedEvent(
+        participantSid: updatedLocalParticipant.sid,
+        displayName: displayName,
+      ));
+    }
+  }
+
+  /// Sets a custom display name for a participant.
+  ///
+  /// This allows you to override the default identity with a more user-friendly name.
+  /// The display name only affects the local UI - it doesn't change the participant's
+  /// identity in the Twilio room.
+  ///
+  /// **Parameters:**
+  /// - [participantSid]: The SID of the participant to update
+  /// - [displayName]: The custom name to display in the UI
+  ///
+  /// **Example:**
+  /// ```dart
+  /// // Set a friendly name for a participant
+  /// await _twilio.setParticipantDisplayName(
+  ///   participantSid: participant.sid,
+  ///   displayName: 'Dr. Smith',
+  /// );
+  /// ```
+  Future<void> setParticipantDisplayName({
+    required String participantSid,
+    required String displayName,
+  }) async {
+    if (_currentRoom != null) {
+      // Update the participant in the current room
+      final updatedParticipants = _currentRoom!.remoteParticipants.map((p) {
+        if (p.sid == participantSid) {
+          return p.copyWith(displayName: displayName);
+        }
+        return p;
+      }).toList();
+
+      // Update the current room with the new participant list
+      _currentRoom = Room(
+        name: _currentRoom!.name,
+        sid: _currentRoom!.sid,
+        state: _currentRoom!.state,
+        localParticipant: _currentRoom!.localParticipant,
+        remoteParticipants: updatedParticipants,
+      );
+
+      // Emit an event to notify listeners that participant info changed
+      _eventController?.add(ParticipantDisplayNameChangedEvent(
+        participantSid: participantSid,
+        displayName: displayName,
+      ));
+    }
+  }
+
   TwilioEvent _parseRoomEvent(dynamic data) {
     debug('Received room event: ${data['event']} with data: $data');
     switch (data['event']) {
