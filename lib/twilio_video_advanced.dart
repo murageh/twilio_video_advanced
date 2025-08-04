@@ -300,6 +300,54 @@ class TwilioVideoAdvanced {
     return await _methodChannel.invokeMethod('toggleLocalVideo');
   }
 
+  /// Sets the local audio track enabled state directly.
+  ///
+  /// This method explicitly enables or disables the local audio track
+  /// without toggling. When disabled, the audio is muted but the track
+  /// remains published.
+  ///
+  /// **Parameters:**
+  /// - [enabled]: `true` to enable audio (unmute), `false` to disable (mute)
+  ///
+  /// **Example:**
+  /// ```dart
+  /// // Mute audio
+  /// await _twilio.setLocalAudioEnabled(false);
+  ///
+  /// // Unmute audio
+  /// await _twilio.setLocalAudioEnabled(true);
+  /// ```
+  ///
+  /// Throws [PlatformException] if no audio track is available.
+  Future<void> setLocalAudioEnabled(bool enabled) async {
+    await _methodChannel.invokeMethod(
+        'setLocalAudioEnabled', {'enabled': enabled});
+  }
+
+  /// Sets the local video track enabled state directly.
+  ///
+  /// This method explicitly enables or disables the local video track
+  /// without toggling. When disabled, the video is turned off but the track
+  /// remains published.
+  ///
+  /// **Parameters:**
+  /// - [enabled]: `true` to enable video (camera on), `false` to disable (camera off)
+  ///
+  /// **Example:**
+  /// ```dart
+  /// // Turn camera off
+  /// await _twilio.setLocalVideoEnabled(false);
+  ///
+  /// // Turn camera on
+  /// await _twilio.setLocalVideoEnabled(true);
+  /// ```
+  ///
+  /// Throws [PlatformException] if no video track is available.
+  Future<void> setLocalVideoEnabled(bool enabled) async {
+    await _methodChannel.invokeMethod(
+        'setLocalVideoEnabled', {'enabled': enabled});
+  }
+
   /// Switches between front and back camera.
   ///
   /// This method switches the camera being used for video capture.
@@ -591,6 +639,119 @@ class TwilioVideoAdvanced {
     _currentRoom = null;
   }
 
+  /// Gets a list of available audio output devices.
+  ///
+  /// Returns a list of audio devices including speakers, earphones, Bluetooth headsets, etc.
+  /// Each device contains name and type information.
+  ///
+  /// **Returns:** A list of maps containing device information.
+  ///
+  /// **Example:**
+  /// ```dart
+  /// final devices = await _twilio.getAvailableAudioDevices();
+  /// for (final device in devices) {
+  ///   print('${device['name']} (${device['type']})');
+  /// }
+  /// ```
+  Future<List<Map<String, dynamic>>> getAvailableAudioDevices() async {
+    final result = await _methodChannel.invokeMethod(
+        'getAvailableAudioDevices');
+    if (result == null) return [];
+
+    // Convert the result to the expected type
+    final List<dynamic> deviceList = List<dynamic>.from(result);
+    return deviceList
+        .map((device) => Map<String, dynamic>.from(device))
+        .toList();
+  }
+
+  /// Gets the currently selected audio output device.
+  ///
+  /// **Returns:** A map containing the selected device information, or null if none selected.
+  ///
+  /// **Example:**
+  /// ```dart
+  /// final selectedDevice = await _twilio.getSelectedAudioDevice();
+  /// if (selectedDevice != null) {
+  ///   print('Current device: ${selectedDevice['name']}');
+  /// }
+  /// ```
+  Future<Map<String, dynamic>?> getSelectedAudioDevice() async {
+    final result = await _methodChannel.invokeMethod('getSelectedAudioDevice');
+    if (result == null) return null;
+
+    // Convert the result to the expected type
+    return Map<String, dynamic>.from(result);
+  }
+
+  /// Selects a specific audio output device.
+  ///
+  /// This allows you to programmatically switch between speakers, earphones,
+  /// Bluetooth headsets, etc.
+  ///
+  /// **Parameters:**
+  /// - [deviceName]: The name of the device to select
+  ///
+  /// **Example:**
+  /// ```dart
+  /// await _twilio.selectAudioDevice('Speaker');
+  /// // or
+  /// await _twilio.selectAudioDevice('Bluetooth Headset');
+  /// ```
+  Future<void> selectAudioDevice(String deviceName) async {
+    await _methodChannel.invokeMethod(
+        'selectAudioDevice', {'deviceName': deviceName});
+  }
+
+  /// Starts listening for audio device changes.
+  ///
+  /// This enables automatic detection of when audio devices are
+  /// connected/disconnected (like Bluetooth headsets).
+  ///
+  /// **Example:**
+  /// ```dart
+  /// await _twilio.startAudioDeviceListener();
+  /// ```
+  Future<void> startAudioDeviceListener() async {
+    await _methodChannel.invokeMethod('startAudioDeviceListener');
+  }
+
+  /// Stops listening for audio device changes.
+  ///
+  /// **Example:**
+  /// ```dart
+  /// await _twilio.stopAudioDeviceListener();
+  /// ```
+  Future<void> stopAudioDeviceListener() async {
+    await _methodChannel.invokeMethod('stopAudioDeviceListener');
+  }
+
+  /// Activates the selected audio device.
+  ///
+  /// This actually routes audio to the selected device. You typically
+  /// call this after selecting a device.
+  ///
+  /// **Example:**
+  /// ```dart
+  /// await _twilio.selectAudioDevice('Bluetooth Headset');
+  /// await _twilio.activateAudioDevice();
+  /// ```
+  Future<void> activateAudioDevice() async {
+    await _methodChannel.invokeMethod('activateAudioDevice');
+  }
+
+  /// Deactivates the current audio device.
+  ///
+  /// This stops audio routing and returns to the default system behavior.
+  ///
+  /// **Example:**
+  /// ```dart
+  /// await _twilio.deactivateAudioDevice();
+  /// ```
+  Future<void> deactivateAudioDevice() async {
+    await _methodChannel.invokeMethod('deactivateAudioDevice');
+  }
+
   TwilioEvent _parseRoomEvent(dynamic data) {
     debug('Received room event: ${data['event']} with data: $data');
     switch (data['event']) {
@@ -649,6 +810,10 @@ class TwilioVideoAdvanced {
           trackSid: data['trackSid'],
           trackType: data['trackType'],
         );
+      case 'localAudioEnabled':
+        return LocalAudioEnabledEvent(data['enabled'] ?? false);
+      case 'localVideoEnabled':
+        return LocalVideoEnabledEvent(data['enabled'] ?? false);
       default:
         throw UnimplementedError('Unknown track event: ${data['event']}');
     }

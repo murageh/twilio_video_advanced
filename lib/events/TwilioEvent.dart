@@ -255,3 +255,45 @@ class TorchErrorEvent extends TwilioEvent {
   /// Creates a torch error event.
   TorchErrorEvent(this.error);
 }
+
+/// Emitted when the local audio track enabled state changes.
+///
+/// This event is fired when the local participant's audio is enabled
+/// or disabled (muted/unmuted), providing the new state.
+///
+/// ```dart
+/// if (event is LocalAudioEnabledEvent) {
+///   setState(() {
+///     isAudioEnabled = event.enabled;
+///   });
+///   print('Audio ${event.enabled ? 'unmuted' : 'muted'}');
+/// }
+/// ```
+class LocalAudioEnabledEvent extends TwilioEvent {
+  /// Whether the local audio track is now enabled.
+  final bool enabled;
+
+  /// Creates a local audio enabled event.
+  LocalAudioEnabledEvent(this.enabled);
+}
+
+/// Emitted when the local video track enabled state changes.
+///
+/// This event is fired when the local participant's video is enabled
+/// or disabled (camera on/off), providing the new state.
+///
+/// ```dart
+/// if (event is LocalVideoEnabledEvent) {
+///   setState(() {
+///     isVideoEnabled = event.enabled;
+///   });
+///   print('Video ${event.enabled ? 'enabled' : 'disabled'}');
+/// }
+/// ```
+class LocalVideoEnabledEvent extends TwilioEvent {
+  /// Whether the local video track is now enabled.
+  final bool enabled;
+
+  /// Creates a local video enabled event.
+  LocalVideoEnabledEvent(this.enabled);
+}

@@ -2,11 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:twilio_video_advanced/twilio_video_advanced.dart';
+import 'package:twilio_video_advanced_example/video_call_screen_complete.dart';
 
+import 'audio_device_test_screen.dart';
 import 'torch_test_screen.dart';
 import 'video_call_screen_with_torch.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-void main() {
+
+Future<void> main() async {
+  await dotenv.load(fileName: ".env");
   runApp(MyApp());
 }
 
@@ -35,6 +40,21 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    // load tokens from env
+    // In a real app, you would fetch these from a secure backend
+    // or use a secure storage solution.
+    // For this demo, we are using hardcoded tokens for simplicity.
+    final patientToken = dotenv.env['TWILIO_VIDEO_PATIENT_TOKEN'] ??
+        'patientToken';
+    if (patientToken.isEmpty) {
+      throw Exception('TWILIO_VIDEO_PATIENT_TOKEN is not set in .env file');
+    }
+    final doctorToken = dotenv.env['TWILIO_VIDEO_DOCTOR_TOKEN'] ??
+        'doctorToken';
+    if (doctorToken.isEmpty) {
+      throw Exception('TWILIO_VIDEO_DOCTOR_TOKEN is not set in .env file');
+    }
+
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
@@ -110,7 +130,7 @@ class _HomePageState extends State<HomePage> {
                             builder: (context) =>
                                 TwilioVideoCallScreenWithTorch(
                                   roomName: 'cool room',
-                                  accessToken: 'test-token-for-patient',
+                                  accessToken: patientToken,
                                 ),
                           ),
                         );
@@ -145,7 +165,7 @@ class _HomePageState extends State<HomePage> {
                             builder: (context) =>
                                 TwilioVideoCallScreenWithTorch(
                                   roomName: 'cool room',
-                                  accessToken: 'test-token-for-doctor',
+                                  accessToken: doctorToken,
                                 ),
                           ),
                         );
@@ -171,6 +191,30 @@ class _HomePageState extends State<HomePage> {
                             color: Colors.white),
                       ),
                     ),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => AudioDeviceTestScreen(),
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.indigo[700],
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 3,
+                        minimumSize: Size(0, 0),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      icon: Icon(Icons.headphones, color: Colors.white),
+                      label: Text('Test Audio Devices'),
+                    ),
                   ],
                 ),
 
@@ -183,7 +227,7 @@ class _HomePageState extends State<HomePage> {
                     Padding(
                       padding: EdgeInsets.symmetric(horizontal: 12),
                       child: Text(
-                        'ORIGINAL VERSION',
+                        'COMPLETE VERSION',
                         style: TextStyle(
                           color: Colors.grey[600],
                           fontSize: 12,
@@ -198,7 +242,7 @@ class _HomePageState extends State<HomePage> {
 
                 SizedBox(height: 20),
 
-                // Original buttons (without flash)
+                // Complete versions - doctor and patient
                 Wrap(
                   alignment: WrapAlignment.center,
                   spacing: 16,
@@ -210,9 +254,9 @@ class _HomePageState extends State<HomePage> {
                           context,
                           MaterialPageRoute(
                             builder: (context) =>
-                                TwilioVideoCallScreen(
+                                TwilioVideoCallScreenComplete(
                                   roomName: 'cool room',
-                                  accessToken: 'test-token-for-patient',
+                                  accessToken: patientToken,
                                 ),
                           ),
                         );
@@ -232,7 +276,7 @@ class _HomePageState extends State<HomePage> {
                       icon: Icon(
                           Icons.person_outline, size: 18, color: Colors.white),
                       label: Text(
-                        'Patient (No Flash)',
+                        'Patient',
                         style: TextStyle(fontSize: 14,
                             fontWeight: FontWeight.w500,
                             color: Colors.white),
@@ -244,9 +288,9 @@ class _HomePageState extends State<HomePage> {
                           context,
                           MaterialPageRoute(
                             builder: (context) =>
-                                TwilioVideoCallScreen(
+                                TwilioVideoCallScreenComplete(
                                   roomName: 'cool room',
-                                  accessToken: 'test-token-for-doctor',
+                                  accessToken: doctorToken,
                                 ),
                           ),
                         );
@@ -266,7 +310,7 @@ class _HomePageState extends State<HomePage> {
                       icon: Icon(Icons.medical_services_outlined, size: 18,
                           color: Colors.white),
                       label: Text(
-                        'Doctor (No Flash)',
+                        'Doctor',
                         style: TextStyle(fontSize: 14,
                             fontWeight: FontWeight.w500,
                             color: Colors.white),

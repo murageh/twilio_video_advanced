@@ -1,0 +1,1537 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:twilio_video_advanced/events/TwilioEvent.dart';
+import 'package:twilio_video_advanced/models/remote_participant.dart';
+import 'package:twilio_video_advanced/twilio_video_advanced.dart';
+import 'package:twilio_video_advanced/widgets/enhanced_participants_grid.dart';
+
+enum ConnectionState {
+  connecting,
+  connected,
+  disconnected,
+  reconnecting,
+  failed,
+}
+
+class TwilioVideoCallScreenComplete extends StatefulWidget {
+  final String roomName;
+  final String accessToken;
+
+  const TwilioVideoCallScreenComplete({
+    super.key,
+    required this.roomName,
+    required this.accessToken,
+  });
+
+  @override
+  State<TwilioVideoCallScreenComplete> createState() =>
+      _TwilioVideoCallScreenCompleteState();
+}
+
+class _TwilioVideoCallScreenCompleteState
+    extends State<TwilioVideoCallScreenComplete> {
+  final _twilio = TwilioVideoAdvanced.instance;
+  final List<RemoteParticipant> _participants = [];
+  RemoteParticipant? _dominantSpeaker;
+  StreamSubscription<TwilioEvent>? _eventSubscription;
+
+  // Connection and state management
+  ConnectionState _connectionState = ConnectionState.connecting;
+  String? _lastError;
+  int _reconnectAttempts = 0;
+  Timer? _reconnectTimer;
+
+  // Media states
+  bool _isAudioPublished = false;
+  bool _isVideoPublished = false;
+  bool _isAudioEnabled = true;
+  bool _isVideoEnabled = true;
+  bool _isFrontCamera = true;
+
+  // Torch/Flash states
+  bool _isTorchAvailable = false;
+  bool _isTorchOn = false;
+
+  // Audio device states
+  List<Map<String, dynamic>> _availableAudioDevices = [];
+  Map<String, dynamic>? _selectedAudioDevice;
+  bool _isAudioDeviceListenerActive = false;
+  bool _isAudioDeviceActivated = false;
+  bool _showAudioDevicePanel = false;
+
+  // Dominance management
+  DominantParticipant _dominantParticipant = DominantParticipant.none;
+  bool _manualDominanceSet = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupEventListeners();
+    _connectToRoom();
+    _checkTorchAvailability();
+    _initializeAudioDevices();
+  }
+
+  void debug(String message) {
+    if (kDebugMode) {
+      print('TwilioVideoCallScreenComplete::DEBUG: $message');
+    }
+  }
+
+  void _setupEventListeners() {
+    _eventSubscription = _twilio.eventStream.listen((event) {
+      if (!mounted) return;
+
+      debug('Event received: ${event.runtimeType}');
+
+      if (event is RoomConnectedEvent) {
+        if (mounted) {
+          setState(() {
+            _connectionState = ConnectionState.connected;
+            _lastError = null;
+            _reconnectAttempts = 0;
+            final local = event.room.localParticipant;
+            _isAudioPublished = local.isAudioPublished;
+            _isVideoPublished = local.isVideoPublished;
+            _isAudioEnabled = local.isAudioEnabled;
+            _isVideoEnabled = local.isVideoEnabled;
+            _participants.clear();
+            _participants.addAll(event.room.remoteParticipants);
+            _updateAutoDominance();
+          });
+          _showSuccessSnackBar('Connected to ${widget.roomName}');
+        }
+      } else if (event is RoomReconnectedEvent) {
+        if (mounted) {
+          setState(() {
+            _connectionState = ConnectionState.connected;
+            _lastError = null;
+            _participants.clear();
+            _participants.addAll(event.room.remoteParticipants);
+            _updateAutoDominance();
+          });
+          _showSuccessSnackBar('Reconnected successfully');
+        }
+      } else if (event is RoomDisconnectedEvent) {
+        debug(
+          'Disconnect reason: ${event.error}, token: ${widget.accessToken}',
+        );
+        if (mounted) {
+          setState(() {
+            _connectionState = ConnectionState.disconnected;
+            _lastError = event.error;
+            _participants.clear();
+            _dominantSpeaker = null;
+            _dominantParticipant = DominantParticipant.none;
+            _manualDominanceSet = false;
+          });
+        }
+      } else if (event is ParticipantConnectedEvent) {
+        if (mounted) {
+          setState(() {
+            _participants.add(event.participant);
+            _updateAutoDominance();
+          });
+          _showInfoSnackBar('${event.participant.identity} joined');
+        }
+      } else if (event is ParticipantDisconnectedEvent) {
+        if (mounted) {
+          setState(() {
+            _participants.removeWhere((p) => p.sid == event.participant.sid);
+            if (_dominantSpeaker?.sid == event.participant.sid) {
+              _dominantSpeaker = null;
+            }
+            _updateAutoDominance();
+          });
+          _showInfoSnackBar('${event.participant.identity} left');
+        }
+      } else if (event is DominantSpeakerChangedEvent) {
+        if (mounted) {
+          setState(() {
+            _dominantSpeaker = event.participant;
+          });
+        }
+      } else if (event is TrackSubscribedEvent && event.trackType == 'video') {
+        debug('Video track subscribed: participantSid=${event.participantSid}');
+        if (mounted) {
+          setState(() {});
+        }
+      } else if (event is TrackUnsubscribedEvent &&
+          event.trackType == 'video') {
+        debug(
+          'Video track unsubscribed: participantSid=${event.participantSid}',
+        );
+        if (mounted) {
+          setState(() {});
+        }
+      } else if (event is TorchStatusChangedEvent) {
+        if (mounted) {
+          setState(() {
+            _isTorchAvailable = event.isAvailable;
+            _isTorchOn = event.isOn;
+          });
+        }
+      } else if (event is TorchErrorEvent) {
+        _showErrorSnackBar('Flash error: ${event.error}');
+      }
+    });
+  }
+
+  Future<void> _connectToRoom() async {
+    try {
+      setState(() {
+        _connectionState = ConnectionState.connecting;
+        _lastError = null;
+      });
+
+      await _twilio.connectToRoom(
+        roomName: widget.roomName,
+        accessToken: widget.accessToken,
+        enableAudio: false,
+        enableVideo: false,
+      );
+    } catch (e) {
+      debug('Connection error: $e');
+      if (mounted) {
+        setState(() {
+          _connectionState = ConnectionState.failed;
+          _lastError = e.toString();
+        });
+        _showConnectionErrorDialog(e.toString());
+      }
+    }
+  }
+
+  Future<void> _checkTorchAvailability() async {
+    try {
+      final available = await _twilio.isTorchAvailable();
+      final isOn = await _twilio.isTorchOn();
+      if (mounted) {
+        setState(() {
+          _isTorchAvailable = available;
+          _isTorchOn = isOn;
+        });
+      }
+    } catch (e) {
+      debug('Torch availability check failed: $e');
+    }
+  }
+
+  Future<void> _initializeAudioDevices() async {
+    try {
+      await _twilio.startAudioDeviceListener();
+      _isAudioDeviceListenerActive = true;
+      await _refreshAudioDevices();
+    } catch (e) {
+      debug('Failed to initialize audio devices: $e');
+    }
+  }
+
+  Future<void> _refreshAudioDevices() async {
+    try {
+      final devices = await _twilio.getAvailableAudioDevices();
+      final selected = await _twilio.getSelectedAudioDevice();
+
+      if (mounted) {
+        setState(() {
+          _availableAudioDevices = devices;
+          _selectedAudioDevice = selected;
+        });
+      }
+    } catch (e) {
+      debug('Failed to refresh audio devices: $e');
+    }
+  }
+
+  Future<void> _selectAudioDevice(String deviceName) async {
+    try {
+      await _twilio.selectAudioDevice(deviceName);
+      await _refreshAudioDevices();
+      _showSuccessSnackBar('Selected: $deviceName');
+    } catch (e) {
+      _showErrorSnackBar('Failed to select device: $e');
+    }
+  }
+
+  Future<void> _toggleAudioDeviceActivation() async {
+    try {
+      if (_isAudioDeviceActivated) {
+        await _twilio.deactivateAudioDevice();
+        setState(() => _isAudioDeviceActivated = false);
+        _showInfoSnackBar('Audio device deactivated');
+      } else {
+        await _twilio.activateAudioDevice();
+        setState(() => _isAudioDeviceActivated = true);
+        _showSuccessSnackBar('Audio device activated');
+      }
+    } catch (e) {
+      _showErrorSnackBar('Failed to toggle audio device: $e');
+    }
+  }
+
+  // Auto-dominance logic
+  void _updateAutoDominance() {
+    if (_manualDominanceSet) return;
+
+    if (_participants.isEmpty) {
+      _dominantParticipant =
+          _isVideoPublished
+              ? DominantParticipant.local
+              : DominantParticipant.none;
+    } else if (_participants.length == 1 && _isVideoPublished) {
+      _dominantParticipant = DominantParticipant.remote;
+    } else {
+      _dominantParticipant = DominantParticipant.none;
+    }
+
+    debug('Auto-dominance updated to: $_dominantParticipant');
+  }
+
+  void _onDominantParticipantChanged(DominantParticipant newDominant) {
+    setState(() {
+      _dominantParticipant = newDominant;
+      _manualDominanceSet = true;
+    });
+    debug('Manual dominance changed to: $newDominant');
+  }
+
+  void _resetManualDominance() {
+    _manualDominanceSet = false;
+    _updateAutoDominance();
+  }
+
+  // Media control methods
+  Future<void> _toggleAudioPublish() async {
+    try {
+      if (_isAudioPublished) {
+        await _twilio.unpublishLocalAudio();
+        _showInfoSnackBar('Audio stopped');
+      } else {
+        await _twilio.publishLocalAudio();
+        _showSuccessSnackBar('Audio started');
+      }
+      setState(() => _isAudioPublished = !_isAudioPublished);
+    } catch (e) {
+      _showErrorSnackBar(
+        'Failed to ${_isAudioPublished ? 'stop' : 'start'} audio: ${e.toString()}',
+      );
+    }
+  }
+
+  Future<void> _toggleVideoPublish() async {
+    try {
+      if (_isVideoPublished) {
+        await _twilio.unpublishLocalVideo();
+        _showInfoSnackBar('Video stopped');
+      } else {
+        await _twilio.publishLocalVideo();
+        _showSuccessSnackBar('Going live!');
+        // Check torch availability after video starts
+        await _checkTorchAvailability();
+      }
+      setState(() {
+        _isVideoPublished = !_isVideoPublished;
+        _resetManualDominance();
+      });
+    } catch (e) {
+      _showErrorSnackBar(
+        'Failed to ${_isVideoPublished ? 'stop' : 'start'} video: ${e.toString()}',
+      );
+    }
+  }
+
+  Future<void> _toggleAudio() async {
+    try {
+      final enabled = await _twilio.toggleLocalAudio();
+      setState(() => _isAudioEnabled = enabled);
+      _showInfoSnackBar(enabled ? 'Audio unmuted' : 'Audio muted');
+    } catch (e) {
+      _showErrorSnackBar('Failed to toggle audio: ${e.toString()}');
+    }
+  }
+
+  Future<void> _toggleVideo() async {
+    try {
+      final enabled = await _twilio.toggleLocalVideo();
+      setState(() => _isVideoEnabled = enabled);
+      _showInfoSnackBar(enabled ? 'Camera on' : 'Camera off');
+    } catch (e) {
+      _showErrorSnackBar('Failed to toggle camera: ${e.toString()}');
+    }
+  }
+
+  Future<void> _switchCamera() async {
+    try {
+      await _twilio.switchCamera();
+      setState(() => _isFrontCamera = !_isFrontCamera);
+      _showInfoSnackBar(
+        'Camera switched to ${_isFrontCamera ? 'front' : 'back'}',
+      );
+      // Check torch availability after camera switch
+      await _checkTorchAvailability();
+    } catch (e) {
+      _showErrorSnackBar('Failed to switch camera: ${e.toString()}');
+    }
+  }
+
+  // Torch control methods
+  Future<void> _toggleTorch() async {
+    if (!_isTorchAvailable) {
+      _showErrorSnackBar('Flash not available on current camera');
+      return;
+    }
+
+    try {
+      final newState = await _twilio.toggleTorch();
+      setState(() => _isTorchOn = newState);
+      _showInfoSnackBar('Flash ${newState ? 'ON' : 'OFF'}');
+    } catch (e) {
+      _showErrorSnackBar('Failed to toggle flash: ${e.toString()}');
+    }
+  }
+
+  Future<void> _leaveCall() async {
+    try {
+      await _twilio.disconnect();
+    } catch (e) {
+      _showErrorSnackBar('Failed to leave call: ${e.toString()}');
+    }
+  }
+
+  // UI helper methods
+  void _showConnectionErrorDialog(String error) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (context) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.error_outline, color: Colors.red),
+                SizedBox(width: 8),
+                Text('Connection Failed'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Unable to connect to the video room.'),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    error,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Go Back'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  _connectToRoom();
+                },
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  void _showSuccessSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Text(message),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _showInfoSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.info_outline, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Text(message),
+          ],
+        ),
+        backgroundColor: Colors.blue,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _showErrorSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'Retry',
+          textColor: Colors.white,
+          onPressed: _connectToRoom,
+        ),
+      ),
+    );
+  }
+
+  IconData _getDeviceIcon(String deviceType) {
+    switch (deviceType) {
+      case 'BluetoothHeadset':
+        return Icons.bluetooth_audio;
+      case 'WiredHeadset':
+        return Icons.headphones;
+      case 'Earpiece':
+        return Icons.phone;
+      case 'Speakerphone':
+        return Icons.speaker;
+      default:
+        return Icons.audio_file;
+    }
+  }
+
+  Color _getDeviceColor(String deviceType) {
+    switch (deviceType) {
+      case 'BluetoothHeadset':
+        return Colors.blue;
+      case 'WiredHeadset':
+        return Colors.green;
+      case 'Earpiece':
+        return Colors.orange;
+      case 'Speakerphone':
+        return Colors.purple;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            // Main content based on connection state
+            if (_connectionState == ConnectionState.connected)
+              _buildConnectedView()
+            else if (_connectionState == ConnectionState.connecting)
+              _buildConnectingView()
+            else if (_connectionState == ConnectionState.failed)
+              _buildErrorView()
+            else
+              _buildDisconnectedView(),
+
+            // Status indicators
+            _buildStatusIndicators(),
+
+            // Audio device panel overlay
+            if (_showAudioDevicePanel) _buildAudioDevicePanel(),
+
+            // Debug info (only in debug mode)
+            if (kDebugMode) _buildDebugInfo(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConnectedView() {
+    return Stack(
+      children: [
+        // Video area
+        Positioned.fill(
+          bottom: 100,
+          child: EnhancedParticipantsGrid(
+            participants: _participants,
+            dominantSpeaker: _dominantSpeaker,
+            isLocalVideoPublished: _isVideoPublished,
+            dominantParticipant: _dominantParticipant,
+            onDominantParticipantChanged: _onDominantParticipantChanged,
+          ),
+        ),
+
+        // Control panel with integrated torch and audio device controls
+        _buildControlPanel(),
+      ],
+    );
+  }
+
+  Widget _buildConnectingView() {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.8),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(
+              color: Colors.white,
+              strokeWidth: 3,
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Joining room...',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              widget.roomName,
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            if (_reconnectAttempts > 0) ...[
+              const SizedBox(height: 16),
+              Text(
+                'Reconnecting... (Attempt $_reconnectAttempts)',
+                style: const TextStyle(color: Colors.orange, fontSize: 12),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorView() {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.9),
+      padding: const EdgeInsets.all(24),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, color: Colors.red, size: 64),
+            const SizedBox(height: 24),
+            const Text(
+              'Connection Failed',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _lastError ?? 'Unknown error occurred',
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 32),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey[700],
+                  ),
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('Go Back'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: _connectToRoom,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                  ),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Try Again'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDisconnectedView() {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.9),
+      padding: const EdgeInsets.all(24),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.call_end, color: Colors.red, size: 64),
+            const SizedBox(height: 24),
+            const Text(
+              'Call Ended',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (_lastError != null && _lastError!.isNotEmpty) ...[
+              Text(
+                _lastError!,
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+            ],
+            const Text(
+              'What would you like to do?',
+              style: TextStyle(color: Colors.white70, fontSize: 16),
+            ),
+            const SizedBox(height: 32),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey[700],
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: const Icon(
+                    Icons.exit_to_app,
+                    size: 18,
+                    color: Colors.white,
+                  ),
+                  label: const Text('Leave'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: _connectToRoom,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                  ),
+                  icon: const Icon(Icons.video_call),
+                  label: const Text('Rejoin'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildControlPanel() {
+    return Positioned(
+      bottom: 0,
+      left: 0,
+      right: 0,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 100, maxHeight: 120),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.black.withValues(alpha: 0.3),
+              Colors.black.withValues(alpha: 0.9),
+            ],
+          ),
+        ),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: IntrinsicHeight(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Go Live Section
+                Flexible(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: _toggleVideoPublish,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor:
+                                _isVideoPublished ? Colors.red : Colors.green,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                          ),
+                          icon: Icon(
+                            _isVideoPublished
+                                ? Icons.videocam_off
+                                : Icons.videocam,
+                            size: 18,
+                          ),
+                          label: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              _isVideoPublished ? 'Stop Video' : 'Go Live',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              maxLines: 1,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                // Audio Broadcasting Section
+                Flexible(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: _toggleAudioPublish,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor:
+                                _isAudioPublished
+                                    ? Colors.blue
+                                    : Colors.grey[600],
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                          ),
+                          icon: Icon(
+                            _isAudioPublished ? Icons.mic : Icons.mic_off,
+                            size: 18,
+                          ),
+                          label: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              _isAudioPublished ? 'Stop Audio' : 'Join Audio',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              maxLines: 1,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                // Media Controls Section
+                Flexible(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Audio mute toggle
+                        Container(
+                          decoration: BoxDecoration(
+                            color:
+                                _isAudioEnabled
+                                    ? Colors.white.withValues(alpha: 0.9)
+                                    : Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                          child: IconButton(
+                            onPressed: _isAudioPublished ? _toggleAudio : null,
+                            icon: Icon(
+                              _isAudioEnabled ? Icons.mic : Icons.mic_off,
+                              color:
+                                  _isAudioEnabled ? Colors.black : Colors.white,
+                              size: 20,
+                            ),
+                            tooltip: _isAudioEnabled ? 'Mute' : 'Unmute',
+                          ),
+                        ),
+
+                        const SizedBox(width: 6),
+
+                        // Video enable toggle
+                        Container(
+                          decoration: BoxDecoration(
+                            color:
+                                _isVideoEnabled
+                                    ? Colors.white.withValues(alpha: 0.9)
+                                    : Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                          child: IconButton(
+                            onPressed: _isVideoPublished ? _toggleVideo : null,
+                            icon: Icon(
+                              _isVideoEnabled
+                                  ? Icons.videocam
+                                  : Icons.videocam_off,
+                              color:
+                                  _isVideoEnabled ? Colors.black : Colors.white,
+                              size: 20,
+                            ),
+                            tooltip:
+                                _isVideoEnabled
+                                    ? 'Turn off camera'
+                                    : 'Turn on camera',
+                          ),
+                        ),
+
+                        const SizedBox(width: 6),
+
+                        // Camera switch
+                        Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.9),
+                            shape: BoxShape.circle,
+                          ),
+                          child: IconButton(
+                            onPressed: _isVideoPublished ? _switchCamera : null,
+                            icon: const Icon(
+                              Icons.flip_camera_ios,
+                              color: Colors.black,
+                              size: 20,
+                            ),
+                            tooltip: 'Switch camera',
+                          ),
+                        ),
+
+                        const SizedBox(width: 6),
+
+                        // TORCH/FLASH CONTROL
+                        Container(
+                          decoration: BoxDecoration(
+                            color:
+                                _isTorchOn
+                                    ? Colors.orange
+                                    : (_isTorchAvailable
+                                        ? Colors.white.withValues(alpha: 0.9)
+                                        : Colors.grey[400]),
+                            shape: BoxShape.circle,
+                          ),
+                          child: IconButton(
+                            onPressed:
+                                (_isVideoPublished && _isTorchAvailable)
+                                    ? _toggleTorch
+                                    : null,
+                            icon: Icon(
+                              _isTorchOn ? Icons.flash_on : Icons.flash_off,
+                              color: _isTorchOn ? Colors.white : Colors.black,
+                              size: 20,
+                            ),
+                            tooltip:
+                                _isTorchAvailable
+                                    ? (_isTorchOn
+                                        ? 'Turn off flash'
+                                        : 'Turn on flash')
+                                    : 'Flash not available',
+                          ),
+                        ),
+
+                        const SizedBox(width: 6),
+
+                        // AUDIO DEVICE SELECTOR - NEW!
+                        Container(
+                          decoration: BoxDecoration(
+                            color:
+                                _showAudioDevicePanel
+                                    ? Colors.indigo
+                                    : (_selectedAudioDevice != null
+                                        ? Colors.white.withValues(alpha: 0.9)
+                                        : Colors.grey[400]),
+                            shape: BoxShape.circle,
+                          ),
+                          child: IconButton(
+                            onPressed: () {
+                              setState(() {
+                                _showAudioDevicePanel = !_showAudioDevicePanel;
+                              });
+                              if (_showAudioDevicePanel) {
+                                _refreshAudioDevices();
+                              }
+                            },
+                            icon: Icon(
+                              _selectedAudioDevice != null
+                                  ? _getDeviceIcon(
+                                    _selectedAudioDevice!['type'],
+                                  )
+                                  : Icons.speaker,
+                              color:
+                                  _showAudioDevicePanel
+                                      ? Colors.white
+                                      : Colors.black,
+                              size: 20,
+                            ),
+                            tooltip: 'Audio devices',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                // Disconnect button
+                Flexible(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: _leaveCall,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                          ),
+                          icon: const Icon(Icons.call_end, size: 18),
+                          label: const FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              'Leave',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAudioDevicePanel() {
+    return Positioned(
+      bottom: 120,
+      right: 16,
+      child: Container(
+        width: 280,
+        constraints: const BoxConstraints(maxHeight: 300),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.9),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.indigo, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black26,
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.indigo,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(10),
+                  topRight: Radius.circular(10),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.headphones, color: Colors.white, size: 20),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Audio Devices',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed:
+                        () => setState(() => _showAudioDevicePanel = false),
+                    icon: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                    constraints: const BoxConstraints(),
+                    padding: EdgeInsets.zero,
+                  ),
+                ],
+              ),
+            ),
+
+            // Current device
+            if (_selectedAudioDevice != null)
+              Container(
+                margin: const EdgeInsets.all(8),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.green.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _getDeviceIcon(_selectedAudioDevice!['type']),
+                      color: Colors.green,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Current Device',
+                            style: TextStyle(
+                              color: Colors.green,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            _selectedAudioDevice!['name'],
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_isAudioDeviceActivated)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.green,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Text(
+                          'ACTIVE',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+
+            // Device list
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: _availableAudioDevices.length,
+                itemBuilder: (context, index) {
+                  final device = _availableAudioDevices[index];
+                  final isSelected =
+                      _selectedAudioDevice?['name'] == device['name'];
+
+                  return ListTile(
+                    dense: true,
+                    leading: CircleAvatar(
+                      radius: 16,
+                      backgroundColor: _getDeviceColor(
+                        device['type'],
+                      ).withValues(alpha: 0.2),
+                      child: Icon(
+                        _getDeviceIcon(device['type']),
+                        color: _getDeviceColor(device['type']),
+                        size: 16,
+                      ),
+                    ),
+                    title: Text(
+                      device['name'],
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight:
+                            isSelected ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                    subtitle: Text(
+                      device['type'],
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 10,
+                      ),
+                    ),
+                    trailing:
+                        isSelected
+                            ? const Icon(
+                              Icons.check_circle,
+                              color: Colors.green,
+                              size: 16,
+                            )
+                            : null,
+                    onTap: () => _selectAudioDevice(device['name']),
+                  );
+                },
+              ),
+            ),
+
+            // Activation controls
+            Container(
+              padding: const EdgeInsets.all(8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed:
+                          _selectedAudioDevice != null
+                              ? _toggleAudioDeviceActivation
+                              : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor:
+                            _isAudioDeviceActivated
+                                ? Colors.orange
+                                : Colors.blue,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                      ),
+                      icon: Icon(
+                        _isAudioDeviceActivated
+                            ? Icons.volume_off
+                            : Icons.volume_up,
+                        size: 16,
+                      ),
+                      label: Text(
+                        _isAudioDeviceActivated ? 'Deactivate' : 'Activate',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: _refreshAudioDevices,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.grey[700],
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.all(8),
+                    ),
+                    child: const Icon(Icons.refresh, size: 16),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusIndicators() {
+    return Positioned(
+      top: 16,
+      left: 16,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Connection status
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: _getConnectionStatusColor().withValues(alpha: 0.8),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(_getConnectionStatusIcon(), color: Colors.white, size: 16),
+                const SizedBox(width: 4),
+                Text(
+                  _getConnectionStatusText(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Participant count (only when connected)
+          if (_connectionState == ConnectionState.connected)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.people, color: Colors.white, size: 16),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${_participants.length + 1} in room',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // Broadcasting status
+          if ((_isVideoPublished || _isAudioPublished) &&
+              _connectionState == ConnectionState.connected)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.red.withValues(alpha: 0.8),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.fiber_manual_record,
+                      color: Colors.white,
+                      size: 12,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _isVideoPublished ? 'LIVE' : 'AUDIO ONLY',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // Torch status indicator
+          if (_isTorchOn && _connectionState == ConnectionState.connected)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.8),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.flash_on, color: Colors.white, size: 12),
+                    const SizedBox(width: 4),
+                    const Text(
+                      'FLASH ON',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // Audio device status indicator
+          if (_selectedAudioDevice != null &&
+              _connectionState == ConnectionState.connected)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.indigo.withValues(alpha: 0.8),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _getDeviceIcon(_selectedAudioDevice!['type']),
+                      color: Colors.white,
+                      size: 12,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _selectedAudioDevice!['type']
+                          .replaceAll('Headset', '')
+                          .replaceAll('phone', '')
+                          .toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDebugInfo() {
+    return Positioned(
+      top: 16,
+      right: 16,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Dominant: $_dominantParticipant${_manualDominanceSet ? ' (Manual)' : ' (Auto)'}',
+              style: const TextStyle(color: Colors.white, fontSize: 10),
+            ),
+            Text(
+              'Torch: Available=$_isTorchAvailable, On=$_isTorchOn',
+              style: const TextStyle(color: Colors.white, fontSize: 10),
+            ),
+            Text(
+              'Audio: Devices=${_availableAudioDevices.length}, Active=$_isAudioDeviceActivated',
+              style: const TextStyle(color: Colors.white, fontSize: 10),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _getConnectionStatusColor() {
+    switch (_connectionState) {
+      case ConnectionState.connected:
+        return Colors.green;
+      case ConnectionState.connecting:
+      case ConnectionState.reconnecting:
+        return Colors.orange;
+      case ConnectionState.disconnected:
+      case ConnectionState.failed:
+        return Colors.red;
+    }
+  }
+
+  IconData _getConnectionStatusIcon() {
+    switch (_connectionState) {
+      case ConnectionState.connected:
+        return Icons.wifi;
+      case ConnectionState.connecting:
+      case ConnectionState.reconnecting:
+        return Icons.wifi_find;
+      case ConnectionState.disconnected:
+      case ConnectionState.failed:
+        return Icons.wifi_off;
+    }
+  }
+
+  String _getConnectionStatusText() {
+    switch (_connectionState) {
+      case ConnectionState.connected:
+        return 'Connected';
+      case ConnectionState.connecting:
+        return 'Connecting...';
+      case ConnectionState.reconnecting:
+        return 'Reconnecting...';
+      case ConnectionState.disconnected:
+        return 'Disconnected';
+      case ConnectionState.failed:
+        return 'Connection Failed';
+    }
+  }
+
+  @override
+  void dispose() {
+    _reconnectTimer?.cancel();
+    _eventSubscription?.cancel();
+    if (_isAudioDeviceListenerActive) {
+      _twilio.stopAudioDeviceListener();
+    }
+    if (_isAudioDeviceActivated) {
+      _twilio.deactivateAudioDevice();
+    }
+    _twilio.disconnect();
+    super.dispose();
+  }
+}

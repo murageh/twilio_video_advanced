@@ -8,7 +8,8 @@ plugins {
 android {
     namespace = "io.crispice.twilio_video_advanced.twilio_video_advanced_example"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+//    ndkVersion = flutter.ndkVersion
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11

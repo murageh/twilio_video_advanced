@@ -87,5 +87,8 @@ dependencies {
     implementation "com.twilio:video-android:7.8.0"
     implementation 'com.dafruits:webrtc:123.0.0'
     implementation 'androidx.core:core-ktx:1.16.0'
+
+    // AudioSwitch for audio device management
+    implementation 'com.twilio:audioswitch:1.1.8'
 //    implementation 'com.google.android.gms:play-services-vision-common:19.1.3'
 }

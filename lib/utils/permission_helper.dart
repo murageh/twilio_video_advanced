@@ -17,6 +17,39 @@ import 'package:permission_handler/permission_handler.dart';
 /// }
 /// ```
 class PermissionHelper {
+  /// Requests all required permissions for video calling including Bluetooth.
+  ///
+  /// This method requests camera, microphone, and Bluetooth permissions
+  /// required for full video calling functionality including audio device switching.
+  ///
+  /// **Returns:** A [PermissionResult] with the status of all permissions.
+  ///
+  /// ```dart
+  /// final result = await PermissionHelper.requestAllPermissions();
+  /// if (result.allGranted) {
+  ///   print('All permissions granted including Bluetooth');
+  /// }
+  /// ```
+  static Future<PermissionResult> requestAllPermissions() async {
+    final permissions = [
+      Permission.camera,
+      Permission.microphone,
+      Permission.bluetoothScan,
+      Permission.bluetoothConnect,
+    ];
+
+    final statuses = await permissions.request();
+
+    return PermissionResult(
+      camera: statuses[Permission.camera] ?? PermissionStatus.denied,
+      microphone: statuses[Permission.microphone] ?? PermissionStatus.denied,
+      bluetoothScan:
+          statuses[Permission.bluetoothScan] ?? PermissionStatus.denied,
+      bluetoothConnect:
+          statuses[Permission.bluetoothConnect] ?? PermissionStatus.denied,
+    );
+  }
+
   /// Requests all required permissions for video calling.
   ///
   /// This method requests both camera and microphone permissions simultaneously
@@ -40,6 +73,20 @@ class PermissionHelper {
     return PermissionResult(
       camera: statuses[Permission.camera] ?? PermissionStatus.denied,
       microphone: statuses[Permission.microphone] ?? PermissionStatus.denied,
+    );
+  }
+
+  /// Checks the current status of all permissions including Bluetooth.
+  ///
+  /// Use this method to determine the current state of all permissions.
+  ///
+  /// **Returns:** A [PermissionResult] with the current status of all permissions.
+  static Future<PermissionResult> checkAllPermissions() async {
+    return PermissionResult(
+      camera: await Permission.camera.status,
+      microphone: await Permission.microphone.status,
+      bluetoothScan: await Permission.bluetoothScan.status,
+      bluetoothConnect: await Permission.bluetoothConnect.status,
     );
   }
 
@@ -148,6 +195,10 @@ class PermissionHelper {
         return 'Camera access is required to share video during calls';
       case Permission.microphone:
         return 'Microphone access is required to share audio during calls';
+      case Permission.bluetoothScan:
+        return 'Bluetooth access is required to connect to audio devices';
+      case Permission.bluetoothConnect:
+        return 'Bluetooth connection access is required to pair with audio devices';
       default:
         return 'This permission is required for the app to function properly';
     }
@@ -171,10 +222,18 @@ class PermissionResult {
   /// The status of the microphone permission.
   final PermissionStatus microphone;
 
+  /// The status of the bluetooth scanning permission.
+  final PermissionStatus? bluetoothScan;
+
+  /// The status of the bluetooth connect permission.
+  final PermissionStatus? bluetoothConnect;
+
   /// Creates a permission result.
   const PermissionResult({
     required this.camera,
     required this.microphone,
+    this.bluetoothScan,
+    this.bluetoothConnect,
   });
 
   /// Whether the camera permission is granted.
@@ -183,8 +242,21 @@ class PermissionResult {
   /// Whether the microphone permission is granted.
   bool get microphoneGranted => microphone.isGranted;
 
+  /// Whether the bluetooth scanning permission is granted.
+  bool get bluetoothGranted => bluetoothScan?.isGranted ?? true;
+
+  /// Whether the bluetooth connect permission is granted.
+  bool get bluetoothConnectGranted => bluetoothConnect?.isGranted ?? true;
+
   /// Whether all required permissions are granted.
   bool get allGranted => cameraGranted && microphoneGranted;
+
+  /// Whether all permissions including Bluetooth are granted.
+  bool get allBluetoothGranted =>
+      cameraGranted &&
+      microphoneGranted &&
+      bluetoothGranted &&
+      bluetoothConnectGranted;
 
   /// Whether any permissions are permanently denied.
   ///
@@ -199,6 +271,10 @@ class PermissionResult {
     final denied = <Permission>[];
     if (!cameraGranted) denied.add(Permission.camera);
     if (!microphoneGranted) denied.add(Permission.microphone);
+    if (bluetoothScan != null && !bluetoothGranted)
+      denied.add(Permission.bluetoothScan);
+    if (bluetoothConnect != null && !bluetoothConnectGranted)
+      denied.add(Permission.bluetoothConnect);
     return denied;
   }
 
@@ -209,11 +285,15 @@ class PermissionResult {
     final denied = <Permission>[];
     if (camera.isPermanentlyDenied) denied.add(Permission.camera);
     if (microphone.isPermanentlyDenied) denied.add(Permission.microphone);
+    if (bluetoothScan?.isPermanentlyDenied == true)
+      denied.add(Permission.bluetoothScan);
+    if (bluetoothConnect?.isPermanentlyDenied == true)
+      denied.add(Permission.bluetoothConnect);
     return denied;
   }
 
   @override
   String toString() {
-    return 'PermissionResult(camera: $camera, microphone: $microphone)';
+    return 'PermissionResult(camera: $camera, microphone: $microphone, bluetooth: $bluetoothScan, bluetoothConnect: $bluetoothConnect)';
   }
 }
