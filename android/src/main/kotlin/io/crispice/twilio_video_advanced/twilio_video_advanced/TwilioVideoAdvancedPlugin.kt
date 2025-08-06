@@ -938,6 +938,7 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
         "identity" to participant.identity,
         "sid" to participant.sid,
         "isConnected" to (participant.state == Participant.State.CONNECTED)
+        "displayName" to participant.displayName,
     )
 
     // Add video renderer management
