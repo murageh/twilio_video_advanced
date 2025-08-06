@@ -899,6 +899,22 @@ class TwilioVideoAdvanced {
         return LocalAudioEnabledEvent(data['enabled'] ?? false);
       case 'localVideoEnabled':
         return LocalVideoEnabledEvent(data['enabled'] ?? false);
+      case 'volumeControlStreamChanged':
+        return VolumeControlStreamChangedEvent(
+          streamType: data['streamType'] ?? 0,
+          enabled: data['enabled'] ?? false,
+        );
+      case 'audioDeviceChanged':
+        return AudioDeviceChangedEvent(
+          availableDevices: List<Map<String, dynamic>>.from(
+              data['availableDevices']?.map((device) =>
+              Map<String,
+                  dynamic>.from(device)) ?? []
+          ),
+          selectedDevice: data['selectedDevice'] != null
+              ? Map<String, dynamic>.from(data['selectedDevice'])
+              : null,
+        );
       default:
         throw UnimplementedError('Unknown track event: ${data['event']}');
     }

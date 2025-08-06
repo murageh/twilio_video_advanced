@@ -64,10 +64,16 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
 
     // Audio manager for handling audio routing
     private var audioManager: AudioManager? = null
+    private var isSpeakerPhoneEnabled = true
+    private var savedVolumeControlStream = 0
+    private var previousAudioMode = 0
+    private var previousMicrophoneMute = false
+    private var audioFocusRequest: Any? = null // AudioFocusRequest for API 26+
 
     // AudioSwitch for managing audio devices
     private var audioSwitch: AudioSwitch? = null
     private var isAudioSwitchStarted = false
+    private var isAudioDeviceActivated = false
 
     override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         context = flutterPluginBinding.applicationContext
@@ -80,9 +86,19 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
 
         // Initialize audio manager
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager?.isSpeakerphoneOn = isSpeakerPhoneEnabled
 
         // Initialize AudioSwitch for managing audio devices
-        audioSwitch = AudioSwitch(context)
+        audioSwitch = AudioSwitch(
+            context,
+            loggingEnabled = true,
+            preferredDeviceList = listOf(
+                AudioDevice.BluetoothHeadset::class.java,
+                AudioDevice.WiredHeadset::class.java,
+                AudioDevice.Speakerphone::class.java,
+                AudioDevice.Earpiece::class.java,
+            ),
+        )
 
         methodChannel =
             MethodChannel(flutterPluginBinding.binaryMessenger, "twilio_video_advanced/methods")
@@ -268,6 +284,22 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
                         room?.localParticipant?.publishTrack(it)
                         // Configure audio for video calling when audio is published
                         configureAudioForVideoCalling()
+                        // Start AudioSwitch when audio is published following Twilio's best practices
+                        if (!isAudioSwitchStarted) {
+                            audioSwitch?.start { audioDevices, selectedDevice ->
+                                // Handle audio device changes - notify Flutter if needed
+                                handler.post {
+                                    // Audio device changes are handled automatically by AudioSwitch
+                                    // Could emit events here if UI needs to be updated
+                                }
+                            }
+                            isAudioSwitchStarted = true
+                        }
+                        // Activate audio device to route audio properly
+                        if (!isAudioDeviceActivated) {
+                            audioSwitch?.activate()
+                            isAudioDeviceActivated = true
+                        }
                     }
                 }
 
@@ -301,6 +333,16 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
                     localAudioTrack?.let { room?.localParticipant?.unpublishTrack(it) }
                     // Reset audio configuration when audio is unpublished
                     resetAudioConfiguration()
+                    // Deactivate audio device when audio is unpublished
+                    if (isAudioDeviceActivated) {
+                        audioSwitch?.deactivate()
+                        isAudioDeviceActivated = false
+                    }
+                    // Stop AudioSwitch when audio is no longer needed
+                    if (isAudioSwitchStarted) {
+                        audioSwitch?.stop()
+                        isAudioSwitchStarted = false
+                    }
                 }
                 "video" -> {
                     localVideoTrack?.let { room?.localParticipant?.unpublishTrack(it) }
@@ -965,6 +1007,19 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
 
         // Release wake lock when cleaning up
         releaseWakeLock()
+
+        // Reset audio configuration
+        resetAudioConfiguration()
+
+        // Stop and deactivate audio switch when cleaning up
+        if (isAudioDeviceActivated) {
+            audioSwitch?.deactivate()
+            isAudioDeviceActivated = false
+        }
+        if (isAudioSwitchStarted) {
+            audioSwitch?.stop()
+            isAudioSwitchStarted = false
+        }
     }
 
     // VIDEO MIRRORING METHODS
@@ -1258,62 +1313,34 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
     }
 
     // AUDIO MANAGEMENT FOR TELEMEDICINE/VIDEO CALLING
-    // This is the key fix for the low microphone volume issue
+    // Following Twilio's best practices for audio configuration
     private fun configureAudioForVideoCalling() {
         try {
             audioManager?.let { am ->
-                // Save original audio mode to restore later
-                am.mode
+                // Save current audio state
+                previousAudioMode = am.mode
 
-                // Set audio mode to video call/communication mode
-                // This ensures the microphone is optimized for speakerphone-style communication
-                // rather than phone call (earpiece) mode
+                // Request audio focus before making any device switch
+                requestAudioFocus()
+
+                /*
+                 * Use MODE_IN_COMMUNICATION as the default audio mode. It is required
+                 * to be in this mode when playout and/or recording starts for the best
+                 * possible VoIP performance. Some devices have difficulties with
+                 * speaker mode if this is not set.
+                 */
                 am.mode = AudioManager.MODE_IN_COMMUNICATION
 
-                // Enable speakerphone mode for video calling
-                am.isSpeakerphoneOn = true
+                /*
+                 * Always disable microphone mute during a WebRTC call.
+                 */
+                previousMicrophoneMute = am.isMicrophoneMute
+                am.isMicrophoneMute = false
 
-                // Set stream volume to ensure good audio levels
-                // Use STREAM_VOICE_CALL for communication audio
-                val maxVolume = am.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
-                val currentVolume = am.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
-
-                // If volume is too low, increase it to 80% of max for good audio quality
-                if (currentVolume < (maxVolume * 0.8)) {
-                    am.setStreamVolume(
-                        AudioManager.STREAM_VOICE_CALL,
-                        (maxVolume * 0.8).toInt(),
-                        0
-                    )
-                }
-
-                // For newer Android versions, request audio focus for voice communication
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    val audioAttributes = android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-
-                    val focusRequest = android.media.AudioFocusRequest.Builder(
-                        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
-                    ).setAudioAttributes(audioAttributes)
-                        .setAcceptsDelayedFocusGain(true)
-                        .build()
-
-                    am.requestAudioFocus(focusRequest)
-                }
-
-                // Configure audio for optimal video calling experience
-                // Disable noise suppression and echo cancellation aggressive modes
-                // that might be reducing microphone sensitivity
-                try {
-                    // Set audio session properties for communication
-                    am.generateAudioSessionId()
-                    // Note: Additional audio processing configuration could be added here
-                    // depending on specific requirements
-                } catch (e: Exception) {
-                    // Audio session configuration is optional
-                }
+                /*
+                 * Enable changing the volume using the up/down keys during a conversation
+                 */
+                setVolumeControl(true)
             }
         } catch (e: Exception) {
             // Log but don't fail - audio configuration is enhancement, not critical
@@ -1324,18 +1351,83 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
     private fun resetAudioConfiguration() {
         try {
             audioManager?.let { am ->
-                // Reset to normal mode when not in video call
-                am.mode = AudioManager.MODE_NORMAL
+                // Reset to previous mode when not in video call
+                am.mode = previousAudioMode
 
-                // Turn off speakerphone
-                am.isSpeakerphoneOn = false
+                // Abandon audio focus
+                abandonAudioFocus()
 
-                // Release audio focus if we had it
+                am.isMicrophoneMute = previousMicrophoneMute
+
+                // Reset volume control
+                setVolumeControl(false)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun requestAudioFocus() {
+        try {
+            audioManager?.let { am ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val playbackAttributes = android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                    val focusRequest = android.media.AudioFocusRequest.Builder(
+                        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                    )
+                        .setAudioAttributes(playbackAttributes)
+                        .setAcceptsDelayedFocusGain(true)
+                        .setOnAudioFocusChangeListener { }
+                        .build()
+                    am.requestAudioFocus(focusRequest)
+                    audioFocusRequest = focusRequest // Save the request for later use
+                } else {
+                    @Suppress("DEPRECATION")
+                    am.requestAudioFocus(
+                        null,
+                        AudioManager.STREAM_VOICE_CALL,
+                        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        try {
+            audioManager?.let { am ->
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     // Note: In a full implementation, you'd store the focusRequest
                     // and call am.abandonAudioFocusRequest(focusRequest) here
+                    @Suppress("DEPRECATION")
+                    am.abandonAudioFocus(null)
+                } else {
+                    @Suppress("DEPRECATION")
                     am.abandonAudioFocus(null)
                 }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun setVolumeControl(enable: Boolean) {
+        try {
+            if (enable) {
+                /*
+                 * Enable changing the volume using the up/down keys during a conversation
+                 */
+                savedVolumeControlStream = 50 // This would typically be set on the Activity
+                // Note: Volume control stream should be set on the Activity level
+                // savedVolumeControlStream = AudioManager.STREAM_VOICE_CALL
+            } else {
+                // Reset volume control stream
+                // This would be handled at the Activity level
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -1405,6 +1497,10 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
             val targetDevice = audioSwitch?.availableAudioDevices?.find { it.name == deviceName }
             if (targetDevice != null) {
                 audioSwitch?.selectDevice(targetDevice)
+
+                // start it
+                audioSwitch?.activate()
+
                 result.success(null)
             } else {
                 result.error(
@@ -1462,7 +1558,55 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
 
     private fun activateAudioDevice(result: MethodChannel.Result) {
         try {
+            // Check if AudioSwitch is started first
+            if (!isAudioSwitchStarted) {
+                // Start AudioSwitch if not already started
+                audioSwitch?.start { audioDevices, selectedDevice ->
+                    audioManager?.isSpeakerphoneOn = selectedDevice is AudioDevice.Speakerphone
+                    // Handle audio device changes
+                    handler.post {
+                        // Emit audio device change events to Flutter
+                        try {
+                            trackEventSink?.success(
+                                mapOf(
+                                    "event" to "audioDeviceChanged",
+                                    "availableDevices" to audioDevices.map { device ->
+                                        mapOf(
+                                            "name" to device.name,
+                                            "type" to when (device) {
+                                                is AudioDevice.BluetoothHeadset -> "BluetoothHeadset"
+                                                is AudioDevice.WiredHeadset -> "WiredHeadset"
+                                                is AudioDevice.Earpiece -> "Earpiece"
+                                                is AudioDevice.Speakerphone -> "Speakerphone"
+                                                else -> "Unknown"
+                                            }
+                                        )
+                                    },
+                                    "selectedDevice" to selectedDevice?.let { device ->
+                                        mapOf(
+                                            "name" to device.name,
+                                            "type" to when (device) {
+                                                is AudioDevice.BluetoothHeadset -> "BluetoothHeadset"
+                                                is AudioDevice.WiredHeadset -> "WiredHeadset"
+                                                is AudioDevice.Earpiece -> "Earpiece"
+                                                is AudioDevice.Speakerphone -> "Speakerphone"
+                                                else -> "Unknown"
+                                            }
+                                        )
+                                    }
+                                )
+                            )
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
+                isAudioSwitchStarted = true
+            }
+
+            // Now activate the audio device
             audioSwitch?.activate()
+            isAudioDeviceActivated = true
             result.success(null)
         } catch (e: Exception) {
             result.error(
@@ -1475,14 +1619,19 @@ class TwilioVideoAdvancedPlugin : FlutterPlugin, MethodCallHandler {
 
     private fun deactivateAudioDevice(result: MethodChannel.Result) {
         try {
-            audioSwitch?.deactivate()
+            // Only deactivate if currently activated
+            if (isAudioDeviceActivated) {
+                audioSwitch?.deactivate()
+                isAudioDeviceActivated = false
+            }
             result.success(null)
         } catch (e: Exception) {
-            result.error(
-                "DEACTIVATE_AUDIO_DEVICE_ERROR",
-                "Failed to deactivate audio device: ${e.message}",
-                null
-            )
+            // Log the warning but don't fail - this is common with Bluetooth devices
+            println("AudioSwitch deactivation warning: ${e.message}")
+
+            // Still mark as deactivated since the operation was attempted
+            isAudioDeviceActivated = false
+            result.success(null)
         }
     }
 

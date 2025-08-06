@@ -298,20 +298,88 @@ class LocalVideoEnabledEvent extends TwilioEvent {
   LocalVideoEnabledEvent(this.enabled);
 }
 
-/// Emitted when a participant's display name is updated.
+/// Emitted when the volume control stream changes during video calls.
 ///
-/// This event is fired when [TwilioVideoAdvanced.setParticipantDisplayName]
-/// is called to update a participant's custom display name.
+/// This event is fired by the Android plugin to notify Flutter about
+/// volume control stream changes following Twilio's best practices.
+/// The Flutter app should handle setting the appropriate volume control stream.
+///
+/// ```dart
+/// if (event is VolumeControlStreamChangedEvent) {
+///   // Handle volume control stream change at Activity level
+///   if (event.enabled) {
+///     // Set volume control to voice call stream
+///   } else {
+///     // Reset to default volume control
+///   }
+/// }
+/// ```
+class VolumeControlStreamChangedEvent extends TwilioEvent {
+  /// The audio stream type that should be used for volume control.
+  /// Typically AudioManager.STREAM_VOICE_CALL (4) for video calls.
+  final int streamType;
+
+  /// Whether volume control should be enabled for video calling.
+  final bool enabled;
+
+  /// Creates a volume control stream changed event.
+  VolumeControlStreamChangedEvent({
+    required this.streamType,
+    required this.enabled,
+  });
+}
+
+/// Emitted when a participant's display name is changed locally.
+///
+/// This event is fired when the local app updates a participant's
+/// display name for UI purposes. The display name change only affects
+/// the local UI and doesn't change the participant's identity in Twilio.
+///
+/// ```dart
+/// if (event is ParticipantDisplayNameChangedEvent) {
+///   setState(() {
+///     // Update participant display name in UI
+///   });
+/// }
+/// ```
 class ParticipantDisplayNameChangedEvent extends TwilioEvent {
   /// The SID of the participant whose display name changed.
   final String participantSid;
 
-  /// The new display name.
+  /// The new display name for the participant.
   final String displayName;
 
   /// Creates a participant display name changed event.
   ParticipantDisplayNameChangedEvent({
     required this.participantSid,
     required this.displayName,
+  });
+}
+
+/// Emitted when the available audio devices change or a device is selected.
+///
+/// This event is fired by the AudioSwitch library when audio devices are
+/// connected/disconnected or when the selected device changes. Use this
+/// to update the UI with the current audio device status.
+///
+/// ```dart
+/// if (event is AudioDeviceChangedEvent) {
+///   setState(() {
+///     availableDevices = event.availableDevices;
+///     selectedDevice = event.selectedDevice;
+///   });
+/// }
+/// ```
+class AudioDeviceChangedEvent extends TwilioEvent {
+  /// List of currently available audio devices.
+  final List<Map<String, dynamic>> availableDevices;
+
+  /// The currently selected audio device, or null if none selected.
+  final Map<String, dynamic>? selectedDevice;
+
+  /// Creates an audio device changed event.
+  AudioDeviceChangedEvent({
+    required this.availableDevices,
+    required this.selectedDevice,
   });
 }

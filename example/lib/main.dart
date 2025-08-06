@@ -2,13 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:twilio_video_advanced_example/audio_device_complete_screen.dart';
+import 'package:twilio_video_advanced_example/audio_device_test_screen.dart';
+import 'package:twilio_video_advanced_example/custom_name_test_screen.dart';
+import 'package:twilio_video_advanced_example/torch_test_screen.dart';
 import 'package:twilio_video_advanced_example/video_call_screen_complete.dart';
-
-import 'audio_device_test_screen.dart';
-import 'custom_name_test_screen.dart';
-import 'torch_test_screen.dart';
-import 'video_call_screen_with_torch.dart';
-
+import 'package:twilio_video_advanced_example/video_call_screen_with_torch.dart';
 
 Future<void> main() async {
   await dotenv.load(fileName: ".env");
@@ -27,6 +26,8 @@ class _HomePageState extends State<HomePage> {
     await [
       Permission.camera,
       Permission.microphone,
+      Permission.bluetoothScan,
+      Permission.bluetoothConnect,
     ].request();
   }
 
@@ -41,9 +42,6 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     // load tokens from env
-    // In a real app, you would fetch these from a secure backend
-    // or use a secure storage solution.
-    // For this demo, we are using hardcoded tokens for simplicity.
     final patientToken = dotenv.env['TWILIO_VIDEO_PATIENT_TOKEN'] ??
         'patientToken';
     if (patientToken.isEmpty) {
@@ -58,7 +56,7 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        title: Text('Twilio Video Demo'),
+        title: Text('Twilio Video Advanced Demo'),
         backgroundColor: Colors.blue[700],
         foregroundColor: Colors.white,
         elevation: 2,
@@ -104,7 +102,7 @@ class _HomePageState extends State<HomePage> {
                       ),
                       SizedBox(height: 4),
                       Text(
-                        'Enhanced video calling with observer mode',
+                        'Complete Audio Device Management with Volume Control',
                         style: TextStyle(
                           fontSize: 15,
                           color: Colors.blueGrey[600],
@@ -116,7 +114,144 @@ class _HomePageState extends State<HomePage> {
                 ),
                 SizedBox(height: 40),
 
+                // NEW FEATURE HIGHLIGHT - Complete Audio Device Management
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.orange[400]!, Colors.orange[600]!],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.orange.withOpacity(0.3),
+                        blurRadius: 12,
+                        offset: Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              Icons.new_releases,
+                              color: Colors.white,
+                              size: 24,
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'NEW: Complete Audio Device Management',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                Text(
+                                  'Full Twilio AudioSwitch integration with volume control',
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.9),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (
+                                        context) => const AudioDeviceCompleteScreen(),
+                                  ),
+                                );
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: Colors.orange[700],
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                elevation: 0,
+                              ),
+                              icon: Icon(Icons.audiotrack, size: 20),
+                              label: Text(
+                                'Patient Mode',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (
+                                        context) => const AudioDeviceCompleteScreen(),
+                                  ),
+                                );
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: Colors.orange[700],
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                elevation: 0,
+                              ),
+                              icon: Icon(Icons.medical_services, size: 20),
+                              label: Text(
+                                'Doctor Mode',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                SizedBox(height: 32),
+
                 // Video Call Buttons
+                Text(
+                  'Video Calling with Flash Control',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[800],
+                  ),
+                ),
+                SizedBox(height: 16),
                 Wrap(
                   alignment: WrapAlignment.center,
                   spacing: 16,
@@ -138,23 +273,18 @@ class _HomePageState extends State<HomePage> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.green[600],
                         foregroundColor: Colors.white,
-                        // icon & text color
                         padding: EdgeInsets.symmetric(
                             horizontal: 20, vertical: 16),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
                         elevation: 3,
-                        minimumSize: Size(0, 0),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
-                      icon: Icon(Icons.person, size: 22, color: Colors.white),
-                      // icon color
+                      icon: Icon(Icons.person, size: 22),
                       label: Text(
-                        'Join as User 1 (Patient) - WITH FLASH',
-                        style: TextStyle(fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white), // text color
+                        'Patient with Flash',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w600),
                       ),
                     ),
                     ElevatedButton.icon(
@@ -179,70 +309,29 @@ class _HomePageState extends State<HomePage> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         elevation: 3,
-                        minimumSize: Size(0, 0),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
-                      icon: Icon(Icons.medical_services, size: 22,
-                          color: Colors.white),
+                      icon: Icon(Icons.medical_services, size: 22),
                       label: Text(
-                        'Join as User 2 (Doctor) - WITH FLASH',
-                        style: TextStyle(fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white),
-                      ),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => AudioDeviceTestScreen(),
-                          ),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.indigo[700],
-                        foregroundColor: Colors.white,
-                        padding: EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        elevation: 3,
-                        minimumSize: Size(0, 0),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      icon: Icon(Icons.headphones, color: Colors.white),
-                      label: Text('Test Audio Devices'),
-                    ),
-                  ],
-                ),
-
-                SizedBox(height: 28),
-
-                // Divider
-                Row(
-                  children: [
-                    Expanded(child: Divider(color: Colors.grey[400])),
-                    Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 12),
-                      child: Text(
-                        'COMPLETE VERSION',
+                        'Doctor with Flash',
                         style: TextStyle(
-                          color: Colors.grey[600],
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1.2,
-                        ),
+                            fontSize: 16, fontWeight: FontWeight.w600),
                       ),
                     ),
-                    Expanded(child: Divider(color: Colors.grey[400])),
                   ],
                 ),
 
-                SizedBox(height: 20),
+                SizedBox(height: 32),
 
-                // Complete versions - doctor and patient
+                // Complete versions
+                Text(
+                  'Complete Video Call Experience',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[800],
+                  ),
+                ),
+                SizedBox(height: 16),
                 Wrap(
                   alignment: WrapAlignment.center,
                   spacing: 16,
@@ -270,16 +359,12 @@ class _HomePageState extends State<HomePage> {
                           borderRadius: BorderRadius.circular(10),
                         ),
                         elevation: 2,
-                        minimumSize: Size(0, 0),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
-                      icon: Icon(
-                          Icons.person_outline, size: 18, color: Colors.white),
+                      icon: Icon(Icons.person_outline, size: 18),
                       label: Text(
-                        'Patient',
-                        style: TextStyle(fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.white),
+                        'Patient Complete',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w500),
                       ),
                     ),
                     ElevatedButton.icon(
@@ -304,16 +389,12 @@ class _HomePageState extends State<HomePage> {
                           borderRadius: BorderRadius.circular(10),
                         ),
                         elevation: 2,
-                        minimumSize: Size(0, 0),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
-                      icon: Icon(Icons.medical_services_outlined, size: 18,
-                          color: Colors.white),
+                      icon: Icon(Icons.medical_services_outlined, size: 18),
                       label: Text(
-                        'Doctor',
-                        style: TextStyle(fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.white),
+                        'Doctor Complete',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w500),
                       ),
                     ),
                   ],
@@ -321,132 +402,94 @@ class _HomePageState extends State<HomePage> {
 
                 SizedBox(height: 32),
 
-                // Test Features Section
-                Container(
-                  width: double.infinity,
-                  padding: EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: Colors.orange[50],
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.orange.withOpacity(0.07),
-                        blurRadius: 8,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Test Features',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.orange[900],
-                        ),
-                      ),
-                      SizedBox(height: 10),
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => TorchTestScreen(),
-                            ),
-                          );
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange[700],
-                          foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(horizontal: 18,
-                              vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          elevation: 2,
-                          minimumSize: Size(0, 0),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        icon: Icon(Icons.flash_on, color: Colors.white),
-                        label: Text(
-                          'Test Torch/Flash',
-                          style: TextStyle(fontWeight: FontWeight.bold,
-                              color: Colors.white),
-                        ),
-                      ),
-                      SizedBox(height: 12),
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  CustomNameTestScreen(
-                                    roomName: 'cool room',
-                                    accessToken: patientToken,
-                                  ),
-                            ),
-                          );
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.purple[700],
-                          foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(horizontal: 18,
-                              vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          elevation: 2,
-                          minimumSize: Size(0, 0),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        icon: Icon(Icons.person_pin, color: Colors.white),
-                        label: Text(
-                          'Test Custom Names (Patient)',
-                          style: TextStyle(fontWeight: FontWeight.bold,
-                              color: Colors.white),
-                        ),
-                      ),
-                      SizedBox(height: 12),
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  CustomNameTestScreen(
-                                    roomName: 'cool room',
-                                    accessToken: doctorToken,
-                                  ),
-                            ),
-                          );
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.purple[700],
-                          foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(horizontal: 18,
-                              vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          elevation: 2,
-                          minimumSize: Size(0, 0),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        icon: Icon(Icons.person_pin, color: Colors.white),
-                        label: Text(
-                          'Test Custom Names (Doctor)',
-                          style: TextStyle(fontWeight: FontWeight.bold,
-                              color: Colors.white),
-                        ),
-                      ),
-                    ],
+                // Other Test Features
+                Text(
+                  'Individual Feature Tests',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[800],
                   ),
                 ),
+                SizedBox(height: 16),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => AudioDeviceTestScreen(),
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.indigo[600],
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      icon: Icon(Icons.headphones, size: 16),
+                      label: Text(
+                          'Audio Devices', style: TextStyle(fontSize: 12)),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => TorchTestScreen(),
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange[600],
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      icon: Icon(Icons.flash_on, size: 16),
+                      label: Text('Torch Test', style: TextStyle(fontSize: 12)),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                CustomNameTestScreen(
+                                  roomName: 'cool room',
+                                  accessToken: patientToken,
+                            ),
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.purple[600],
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      icon: Icon(Icons.person_pin, size: 16),
+                      label: Text(
+                          'Custom Names', style: TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                ),
 
-                SizedBox(height: 28),
+                SizedBox(height: 32),
 
                 // Instructions
                 Container(
@@ -465,7 +508,7 @@ class _HomePageState extends State<HomePage> {
                               size: 20),
                           SizedBox(width: 8),
                           Text(
-                            'How to Test',
+                            'Key Features Demonstrated',
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               color: Colors.blue[700],
@@ -475,11 +518,12 @@ class _HomePageState extends State<HomePage> {
                       ),
                       SizedBox(height: 8),
                       Text(
-                        '• Use two devices to test multi-user functionality\n'
-                            '• Start as observer (no video/audio initially)\n'
-                            '• Use "Go Live" to start broadcasting\n'
-                            '• Test torch on back camera for best results\n'
-                            '• Tap video areas to switch dominance in PiP mode',
+                        '• Complete Audio Device Management with Twilio AudioSwitch\n'
+                            '• Proper Volume Control Stream following Twilio best practices\n'
+                            '• Automatic audio focus management for video calls\n'
+                            '• Observer mode → Go Live functionality\n'
+                            '• Camera flash/torch control during video calls\n'
+                            '• Real-time audio device switching (Bluetooth, wired, speaker)',
                         style: TextStyle(
                           fontSize: 13,
                           color: Colors.blue[700],
@@ -503,6 +547,11 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      title: 'Twilio Video Advanced Demo',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
+      ),
       home: HomePage(),
     );
   }
